@@ -1,0 +1,34 @@
+# ============================================================
+# 睿云智能工作台 · UI 测试平台
+# ============================================================
+
+# ---------- 凭证：绝不入库 ----------
+# 后端大模型密钥文件（0600，由 core/llm_client.py 读写）
+.llm_secrets.json
+.llm_secrets.*.tmp
+# 应用设置本机覆盖（0600，由 core/settings.py 读写：被测应用路径 / 日志目录）
+.app_settings.json
+.app_settings.*.tmp
+# 兼容其它本地密钥文件命名
+.secrets.yml
+.secrets.yaml
+config.local.yaml
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# ---------- 运行期产物 ----------
+logs/*.log
+*.log
+# 附件库：用例上传的附件（体积不定，不入库）
+artifacts/uploads/
+# 用户工作区（~/.ruiyun-autotest）在用户主目录下，天然不入库；
+# 历史位置 workspace/ 若仍存在也一并忽略
+workspace/
+
+# ---------- 系统 ----------
+.DS_Store

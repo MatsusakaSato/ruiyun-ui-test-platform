@@ -1,0 +1,8 @@
+# 睿云智能工作台 · UI 测试平台运行时依赖
+# 其余能力（http.server / urllib / subprocess / json / ast / plistlib 等）均来自标准库。
+# 版本按 Python 版本分档锁定：仓库内 .venv 为 Python 3.9，
+# 而 websocket-client >= 1.9.1 要求 Python >= 3.10，故 3.9 回退到 1.9.0。
+PyYAML==6.0.3
+Jinja2==3.1.6
+websocket-client==1.9.2; python_version >= "3.10"
+websocket-client==1.9.0; python_version < "3.10"

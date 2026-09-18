@@ -1,0 +1,490 @@
+#!/usr/bin/env python3
+"""睿云智能工作台 · 硬 Bug 覆盖率测试平台 —— 主流程编排。
+
+三段式流水线：
+  Stage 1  UI 自动化操作   drivers/ui_driver.py  注入用例、等待新会话落盘
+  Stage 2  日志覆盖断言     core/log_parser.py + core/assertor.py
+  Stage 3  测试报告生成     core/metrics.py + report/builder.py
+
+用法：
+    python run_pipeline.py                    # 完整流程（UI + 日志 + 报告）
+    python run_pipeline.py --cases 1          # 只跑前 1 条用例
+    python run_pipeline.py --keep-app         # 结束后保留应用进程
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import plistlib
+import sys
+import time
+import traceback
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT))
+
+import yaml  # noqa: E402
+
+from core.assertor import run_assertions  # noqa: E402
+from core.log_parser import parse_session  # noqa: E402
+from core.metrics import build_metrics  # noqa: E402
+from core.models import CaseResult, Finding  # noqa: E402
+from core.settings import config_path, effective_config, preset_path, rounds_dir  # noqa: E402
+from report.builder import render_report  # noqa: E402
+
+
+def _log(msg: str) -> None:
+    print(msg, flush=True)
+
+
+def _ev_ts(ev: dict) -> float:
+    try:
+        return float(ev.get("ts") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _events_for_session(events: list, sess, t_send: float) -> list:
+    """从全轮事件流里取出属于某会话的自动确认事件。
+
+    口径优先级：
+      1. 驱动在点击那一刻记录了归属会话（ev["sess"]）→ 按会话目录严格匹配。
+         并发（max_inflight>1）下这是唯一可靠的信息源；
+      2. 事件没有 sess（旧版本产物等）→ 回退「该用例发送之后」的时间窗口径，
+         只能近似（条目标注归属来源 time-window）。
+    """
+    key = str(sess)
+    owned = [e for e in (events or [])
+             if isinstance(e, dict) and str(e.get("sess") or "") == key]
+    if owned:
+        return owned
+    return [e for e in (events or [])
+            if isinstance(e, dict) and not e.get("sess")
+            and _ev_ts(e) >= t_send - 1]
+
+
+def read_app_version(cfg: dict) -> tuple:
+    """从 Info.plist 读取版本号。"""
+    binary = Path(cfg["app"]["binary"])
+    plist = binary.parent.parent / "Info.plist"
+    try:
+        with plist.open("rb") as f:
+            info = plistlib.load(f)
+        return info.get("CFBundleShortVersionString", ""), info.get("CFBundleIdentifier", "")
+    except Exception:
+        return "", cfg["app"].get("bundle_id", "")
+
+
+def read_max_iterations(cfg: dict) -> int:
+    """从 agent 配置读取 ReAct 迭代上限，作为死循环判定的基线。"""
+    p = Path(cfg["paths"].get("agent_config", ""))
+    if not p.is_file():
+        return 0
+    try:
+        data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+        return int((data.get("react") or {}).get("max_iterations") or 0)
+    except Exception:
+        return 0
+
+
+# --------------------------------------------------------------------- Stage 1
+def run_ui_cases(cfg: dict, cases: list, driver) -> list:
+    """流水线执行用例：发送串行、生成并行，最多 max_inflight 条同时在途。
+
+    实测依据（experiment_pipeline.py）：A 生成中「新建任务」0.4s 可点，
+    新会话目录在发送瞬间创建，先发的任务不被后续操作打断，两者日志互不干扰。
+
+    发送是串行的 —— 一条用例发送并确认其会话目录出现后才发下一条，
+    因此「用例 ↔ 会话」绑定依然明确；等待则谁先完成先收谁（滑动窗口）。
+    max_inflight=1 时退化为完全串行。
+    """
+    results = []
+    # 等待上限：对模型工作时长不设限，仅在等满后停止等待并解析已有日志
+    case_timeout = float(cfg.get("case_timeout_s", 1200))
+    # 新会话目录出现的等待（与应用生成时长无关，通常几秒）
+    new_sess_timeout = float(cfg.get("new_session_timeout_s", 90))
+    # 同时在途的会话数上限
+    max_inflight = max(1, int(cfg.get("max_inflight", 5)))
+
+    pending = list(enumerate(cases, 1))
+    inflight = []          # 每项 [res, sess, done, t_send]
+    n_total = len(cases)
+    drain_logged = False   # 全部发送完只提示一次，避免等待期刷屏
+
+    def _collect(res, sess, done: bool, t_send: float):
+        """收取一条完成的用例：解析日志、跑断言、入结果集。"""
+        if not done:
+            res.waited_limit = True
+            res.wait_note = f"已达等待上限（{case_timeout / 60:.0f} 分钟），按已落盘日志出结果"
+        # 全流程标记：按会话归属收集该用例的自动确认（含工具授权/计划确认）。
+        # 旧口径「发送之后全部算它的」在并发下必然串台（先完成者背锅、最后一条
+        # 吞掉后面全部），故改为按驱动记录的 sess 归属，见 _events_for_session。
+        res.confirm_events = _events_for_session(driver.confirm_events, sess, t_send)
+        res.auto_confirms = len(res.confirm_events)
+        res.ui_ok = True
+        res.trace = parse_session(sess)
+        if res.trace is None:
+            res.ui_error = "会话日志解析失败"
+            res.ui_ok = False
+        else:
+            res.findings = run_assertions(
+                res.trace, cfg["rules"], read_max_iterations(cfg)
+            )
+        results.append(res)
+        tr = res.trace
+        _log(f"        ← 收取 {res.case_id} | 会话 {sess.name} | 工具调用 "
+             f"{len(tr.tool_calls) if tr else 0} | 命中 {len(res.findings)} | {res.status}"
+             + ("（等待上限，非异常）" if not done else ""))
+
+    while pending or inflight:
+        # ---------- 1) 填满在途窗口 ----------
+        while pending and len(inflight) < max_inflight:
+            i, case = pending.pop(0)
+            cid = case.get("id") or f"CASE-{i:03d}"
+            name = case.get("name") or cid
+            prompt = case.get("prompt") or ""
+            _log(f"\n[{i}/{n_total}] {cid} · {name}")
+            _log(f"        提示词: {prompt[:60]}{'...' if len(prompt) > 60 else ''}")
+            res = CaseResult(
+                case_id=cid, name=name, prompt=prompt,
+                expected_tools=case.get("expect_tools") or [],
+            )
+            t0 = time.time()
+            try:
+                # 回到「新建任务」首页：生成中的其他会话不受影响（已实测）
+                if not driver.reset_to_new_task():
+                    res.ui_ok = False
+                    res.ui_error = "无法回到新建任务首页"
+                    _log("        ✗ 无法回到新建任务首页")
+                    res.elapsed_s = time.time() - t0
+                    results.append(res)
+                    continue
+
+                # 附件投递：必须在输入文本之前 —— 应用把「引用文件」与草稿一起提交。
+                # 投递失败仍继续发送（保留消息内容作为对照），但写入 ui_error 明确标为异常，
+                # 避免「附件根本没送进去，用例却照常跑完」的假通过。
+                attach_paths = [str(p) for p in (case.get("attachments") or []) if str(p).strip()]
+                if attach_paths:
+                    res.attachments = attach_paths
+                    ok_att, msg_att = driver.attach_files(attach_paths)
+                    res.attach_note = msg_att
+                    _log(f"        附件{'已引用' if ok_att else '投递失败'}: {msg_att}")
+                    if not ok_att:
+                        res.ui_error = f"附件未投递：{msg_att}"
+
+                before = driver.snapshot_sessions()
+                driver.type_text(prompt)
+                time.sleep(0.5)
+                how = driver.send()
+                sess = driver.wait_new_session(before, timeout_s=new_sess_timeout)
+                if not sess:
+                    res.ui_error = "发送后未产生新会话日志"
+                    res.elapsed_s = time.time() - t0
+                    results.append(res)
+                    _log("        ✗ 未产生新会话")
+                    continue
+
+                res.session_id = sess.name
+                # 事件归属：此后驱动点击的确认卡片都算在这条会话头上
+                driver.set_current_sess(sess)
+                inflight.append([res, sess, False, t0])
+                _log(f"        已发送（{how}），会话 {sess.name} 已创建"
+                     f"（在途 {len(inflight)}/{max_inflight}）")
+            except Exception as exc:
+                res.ui_ok = False
+                res.ui_error = f"{type(exc).__name__}: {exc}"
+                _log(f"        ✗ UI 异常: {res.ui_error}")
+                res.elapsed_s = time.time() - t0
+                results.append(res)
+
+        # ---------- 2) 等待至少一条在途会话稳定 ----------
+        if not inflight:
+            continue
+        if not pending and not drain_logged:
+            drain_logged = True
+            _log(f"\n  全部 {n_total} 条用例已发送，当前在途 {len(inflight)} 条 —— "
+                 f"等待生成完成并逐条收取（谁先完成先收谁，收取后即补入下一条）…")
+
+        # 自动确认连续失败 → 请求人工介入：给最旧的在途用例挂 P0 finding（仅一次）
+        if (getattr(driver, "confirm_human_needed", False)
+                and not getattr(driver, "_human_reported", False)):
+            driver._human_reported = True
+            # 挂到「转人工那一刻所在会话」对应用例；无归属信息时退回最旧在途用例
+            hs = str(getattr(driver, "confirm_human_sess", "") or "")
+            owner = next((r for r, s, _, _ in inflight if hs and str(s) == hs), None)
+            res0 = owner if owner is not None else inflight[0][0]
+            res0.findings.append(Finding(
+                rule="CONFIRM_MANUAL_NEEDED", severity="P0",
+                session_id=res0.session_id,
+                detail=("确认卡片自动点击连续 5 次失败，任务卡在等待人工授权。"
+                        "请在应用界面手动处理；处理后的结果仍会被正常采集，"
+                        "但该用例已标记需人工复核。"),
+                evidence="详见控制台 [auto-confirm] 日志与本用例时间线中的自动确认条目",
+            ))
+            res0.ui_ok = True
+            _log("        ‼️ 自动确认连续失败 —— 已标记需人工介入"
+                 f"（用例 {res0.case_id}），请在应用界面手动点击确认卡片")
+
+        dirs = [sess for _, sess, _, _ in inflight]
+        pairs = [(sess, res) for res, sess, _, _ in inflight]
+        settled = driver.wait_some_settled(
+            dirs, timeout_s=case_timeout, inflight_pairs=pairs,
+            cycle_s=float((cfg.get("app") or {}).get("auto_confirm_cycle_s", 6)),
+        )
+        settled_set = set(settled)
+
+        if settled_set:
+            # 收走已完成的，其余留在窗口继续等
+            remaining = []
+            for res, sess, done, t0 in inflight:
+                if sess in settled_set:
+                    res.elapsed_s = time.time() - t0
+                    _collect(res, sess, done=True, t_send=t0)
+                else:
+                    remaining.append([res, sess, done, t0])
+            inflight = remaining
+        else:
+            # 等满上限一条都没稳定 → 全部剩余按等待上限出结果（非异常）
+            for res, sess, done, t0 in inflight:
+                res.elapsed_s = time.time() - t0
+                _collect(res, sess, done=False, t_send=t0)
+            inflight = []
+
+    return results
+
+
+def load_cases(cases_file: str) -> list:
+    """载入本轮用例。
+
+    优先使用调用方手动指定的用例文件（界面输入 → 临时文件），
+    未指定时回退到用户工作区的 testcases.yaml 预设。
+    """
+    path = Path(cases_file) if cases_file else preset_path()
+    if not path.is_file():
+        _log(f"  ✗ 用例文件不存在: {path}")
+        return []
+    text = path.read_text(encoding="utf-8")
+    if path.suffix.lower() == ".json":
+        data = json.loads(text)
+    else:
+        data = yaml.safe_load(text)
+    if isinstance(data, list):          # 纯列表形式
+        return data
+    return (data or {}).get("cases") or []
+
+
+# --------------------------------------------------------------------- main
+def main() -> int:
+    ap = argparse.ArgumentParser(description="睿云智能工作台硬 Bug 覆盖率测试平台")
+    ap.add_argument("--config", default=str(config_path()))
+    ap.add_argument("--cases", type=int, default=0, help="只执行前 N 条用例")
+    ap.add_argument("--cases-file", default="",
+                    help="手动指定的用例文件（YAML/JSON），供界面输入用例时使用")
+    ap.add_argument("--repro-times", type=int, default=0,
+                    help="对每条 bug 签名自动复现 N 次，量化复现率（0=关闭）")
+    ap.add_argument("--repro-limit", type=int, default=0,
+                    help="最多验证多少个 bug 签名（按 P0→P1 排序取前 N，0=全部）")
+    ap.add_argument("--max-inflight", type=int, default=0,
+                    help="同时在途用例上限（流水线并发数），0=沿用 config.yaml 的 max_inflight")
+    ap.add_argument("--keep-app", action="store_true",
+                    help="[已废弃] 应用现在常驻不关闭，该参数无任何作用，仅为兼容旧命令保留")
+    ap.add_argument("--run-id", default="", help="轮次 ID（可视化平台传入，用于归档该轮全部数据）")
+    ap.add_argument("--report-name", default="ruiyun_hardbug_report.html")
+    args = ap.parse_args()
+
+    t_start = time.time()
+    cfg = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
+    # 应用路径 / 日志路径三层合并：.app_settings.json > config.yaml > 内置默认
+    cfg = effective_config(cfg)
+    if args.max_inflight > 0:
+        cfg["max_inflight"] = args.max_inflight
+    if args.keep_app:
+        _log("· 提示：--keep-app 已废弃（应用现在常驻，运行结束不会关闭）")
+
+    cases = load_cases(args.cases_file)
+    if args.cases:
+        cases = cases[: args.cases]
+    if not cases:
+        _log("  ✗ 本轮没有可用用例，已中止")
+        return 2
+    app_version, bundle_id = read_app_version(cfg)
+    max_iter = read_max_iterations(cfg)
+    run_mode = "UI 自动化"
+    case_src = "手动输入" if args.cases_file else "testcases.yaml 预设"
+    _log("=" * 74)
+    _log(f"睿云智能工作台 · 硬 Bug 覆盖率测试平台")
+    _log(f"应用版本 {app_version} | 用例 {len(cases)} 条（{case_src}）| 模式 {run_mode} | "
+         f"ReAct 迭代上限 {max_iter or '未读取到'}"
+         + f" | 流水线并发 {max(1, int(cfg.get('max_inflight', 5)))}")
+    _log("=" * 74)
+
+    driver = None
+    results = []
+
+    from drivers.ui_driver import RuiyunUIDriver
+    driver = RuiyunUIDriver(cfg)
+    _log("\n[Stage 1] 接入应用（已运行则复用，未运行则启动）...")
+    ok, how = driver.ensure_ready()
+    if not ok:
+        if how == "launch_failed":
+            _log("  ✗ 应用启动失败或调试端口未就绪")
+        else:
+            _log("  ✗ 无法接入渲染进程")
+        return 2
+    _log(f"  ✓ {'复用已运行的应用' if how == 'reused' else '已启动应用'} | "
+         f"界面: {driver.target_url}")
+
+    # 应用常驻：默认结束后不关闭，仅断开 CDP 连接（下次运行直接复用）。
+    # 仅当 config 显式设 close_app_after_run=true 时才关闭「我们自己启动的」实例。
+    results = run_ui_cases(cfg, cases, driver)
+    driver.detach()
+    if cfg.get("app", {}).get("close_app_after_run"):
+        driver.kill_app()
+        _log("  · 已按 close_app_after_run=true 关闭应用进程")
+
+    t_stage1 = time.time() - t_start   # Stage 1 耗时：应用启动 + UI 用例执行
+
+    # --------------------------------------------- Stage 2 本轮日志覆盖断言
+    # 评估口径：只针对本轮用例产生的会话断言，不追溯历史日志
+    _log("\n[Stage 2] 本轮调用链路断言（仅本轮用例会话）...")
+    t_stage2 = time.time()
+    max_iter = read_max_iterations(cfg)
+    round_findings = [f for c in results for f in c.findings]
+    for c in results:
+        if c.trace is not None and not c.findings:
+            # 兜底：UI 阶段未断言的（如回放失败路径）补一次
+            c.findings = run_assertions(c.trace, cfg["rules"], max_iter)
+    _log(f"  本轮用例 {len(results)} 条，断言命中 {len(round_findings)} 条"
+         + ("（本轮未发现问题）" if not round_findings else ""))
+    t_stage2 = time.time() - t_stage2
+
+    # ------------------------------------------------ Stage 2.5 复现率验证
+    recipes = []
+    if args.repro_times > 0 and round_findings:
+        from core.repro import build_recipes, verify_recipe
+        round_traces = [c.trace for c in results if c.trace]
+        recipes = build_recipes(round_findings, round_traces, cfg)
+        if args.repro_limit and len(recipes) > args.repro_limit:
+            # P0 优先验证，控制耗时
+            recipes.sort(key=lambda r: (0 if r.severity == "P0" else 1, r.key))
+            recipes = recipes[: args.repro_limit]
+        _log(f"\n[Stage 2.5] 复现率验证：{len(recipes)} 个 bug 签名 × {args.repro_times} 次")
+        if not recipes:
+            _log("  无可用复现配方（原始提问缺失且无法合成）")
+        for r in recipes:
+            _log(f"  ▶ {r.key}  提示词: {r.prompt[:52]}")
+            verify_recipe(r, driver, cfg, times=args.repro_times, log=lambda m: _log("    " + m))
+            _log(f"    ⇒ 复现 {r.hits}/{r.attempts} = {r.rate:.0%} → {r.stability}")
+        driver.detach()   # 仅断开连接，应用保持运行
+        if cfg.get("app", {}).get("close_app_after_run"):
+            driver.kill_app()
+            _log("  · 已按 close_app_after_run=true 关闭应用进程")
+
+    # ---------------------------------------------------------- Stage 3 报告
+    _log("\n[Stage 3] 生成可视化测试报告...")
+    t_stage3 = time.time()
+    elapsed = time.time() - t_start
+    stage_times = {
+        "ui_automation_s": round(t_stage1, 1),
+        "assert_s": round(t_stage2, 1),
+        "report_s": 0.0,
+        "total": round(elapsed, 1),
+    }
+    metrics = build_metrics(results, cfg, recipes=recipes, stage_times=stage_times)
+    report_path = ROOT / "report" / args.report_name
+    render_report(metrics, report_path, app_version=app_version,
+                  bundle_id=bundle_id, run_mode=run_mode, total_elapsed=elapsed)
+    stage_times["report_s"] = round(time.time() - t_stage3, 1)
+    metrics["objective"]["timing"]["stage_times"] = stage_times
+
+    art = ROOT / "artifacts"
+    if not art.is_dir():
+        art.mkdir(parents=True)
+    (art / "metrics.json").write_text(
+        json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")
+    (art / "case_results.json").write_text(
+        json.dumps([c.to_dict() for c in results], ensure_ascii=False, indent=2),
+        encoding="utf-8")
+    if recipes:
+        (art / "repro_results.json").write_text(
+            json.dumps([r.to_dict() for r in recipes], ensure_ascii=False, indent=2),
+            encoding="utf-8")
+
+    # ------------------------------------------------ 轮次归档（可视化平台数据源）
+    # 归档到用户工作区 rounds/（与用例、附件同处，用户可直接查看）
+    if args.run_id:
+        from core.trajectory import build_round_detail
+        round_dir = rounds_dir() / args.run_id
+        if not round_dir.is_dir():
+            round_dir.mkdir(parents=True)
+        detail = build_round_detail(
+            results, metrics,
+            [r.to_dict() for r in recipes] if recipes else [],
+            stage_times=stage_times)
+        (round_dir / "round_detail.json").write_text(
+            json.dumps(detail, ensure_ascii=False), encoding="utf-8")
+        round_summary = {
+            "run_id": args.run_id,
+            "run_mode": run_mode,
+            "finished_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "exit": "ok",
+            "elapsed_s": round(elapsed, 1),
+            "app_version": app_version,
+            "summary": metrics["summary"],
+            "repro_summary": metrics.get("repro_summary") or {},
+            "cases": metrics["case_rows"],
+            "round_tools": detail["round_tools"],
+            "round_skills": detail["round_skills"],
+            # 全流程标记：本轮所有自动确认事件（时间/按钮文本/class）
+            "auto_confirm_events": getattr(driver, "confirm_events", []) if driver else [],
+            # 自动确认连续失败时置 true —— 提示查看控制台并人工介入
+            "auto_confirm_human_needed": bool(getattr(driver, "confirm_human_needed", False)) if driver else False,
+        }
+        (round_dir / "round_summary.json").write_text(
+            json.dumps(round_summary, ensure_ascii=False, indent=2), encoding="utf-8")
+        try:
+            (round_dir / "report.html").write_text(
+                report_path.read_text(encoding="utf-8"), encoding="utf-8")
+        except Exception:
+            pass
+        _log(f"\n  轮次已归档 → {round_dir}")
+
+    s = metrics["summary"]
+    obj = metrics["objective"]
+    _log("\n" + "=" * 74)
+    _log("交付结果（评估口径：仅本轮对话）")
+    _log(f"  用例        {s['cases']} 条 → 通过 {s['passed']} / 断言失败 {s['failed']} / "
+         f"UI失败 {s['ui_failed']}  （通过率 {s['pass_rate']}%）")
+    _log(f"  问题发现    {s['findings']} 条（P0 {s['p0']} / P1 {s['p1']}）"
+         + ("  ← 本轮未发现问题" if s['findings'] == 0 else ""))
+    _log(f"  工具调用    {s['tool_calls_total']} 次，失败 {s['tool_calls_failed']} 次"
+         f"（失败率 {s['tool_fail_rate']}%），截断 {s['tool_calls_truncated']} 次")
+    _log(f"  客观用量    提问 {obj['requests']['turns']} 轮 · 思考 {obj['requests']['thinking_steps']} 步 · "
+         f"token估算 {obj['tokens']['total_est']}（入 {obj['tokens']['input_est']} / 出 {obj['tokens']['output_est']}）")
+    _log(f"  响应耗时    平均首响 {obj['timing']['avg_first_response_s']}s · "
+         f"平台阶段 {obj['timing']['stage_times']}")
+    if metrics.get("repro_summary", {}).get("verified"):
+        rs = metrics["repro_summary"]
+        _log(f"  复现率      已验证 {rs['verified']} 个签名：必现 {rs['stable']} / "
+             f"高概率 {rs['likely']} / 偶发 {rs['flaky']}，平均 {rs['avg_rate']:.0%}")
+    _log(f"  报告        {report_path}")
+    if driver is not None and getattr(driver, "confirm_events", None):
+        ce = driver.confirm_events
+        _log(f"  自动确认    {len(ce)} 次 → " + "；".join(
+            f"{e['time']} 「{e['text'][:20]}」" for e in ce[:6])
+            + ("…" if len(ce) > 6 else ""))
+    _log(f"  指标 JSON   {art / 'metrics.json'}")
+    _log(f"  总耗时      {elapsed:.1f}s")
+    _log("=" * 74)
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except KeyboardInterrupt:
+        raise SystemExit(130)
+    except Exception:
+        traceback.print_exc()
+        raise SystemExit(1)

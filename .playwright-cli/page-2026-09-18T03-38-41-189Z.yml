@@ -1,0 +1,41 @@
+- generic [active] [ref=e1]:
+  - banner [ref=e2]:
+    - generic [ref=e3]:
+      - heading "睿云智能工作台 · UI 测试平台" [level=1] [ref=e4]
+      - generic [ref=e5]: 空闲
+      - generic [ref=e6]:
+        - text: 环境
+        - combobox [ref=e7]
+        - generic [ref=e8]: "?"
+      - generic [ref=e9]:
+        - button "✕ 关闭实例" [ref=e10] [cursor=pointer]
+        - generic [ref=e11]: "?"
+      - generic [ref=e12]:
+        - button "⚙ 设置 ▾" [ref=e13] [cursor=pointer]
+        - generic [ref=e14]: "?"
+      - generic [ref=e15]:
+        - text: 并发数
+        - combobox [ref=e16]:
+          - option "1"
+          - option "2"
+          - option "3"
+          - option "5" [selected]
+          - option "8"
+          - option "10"
+          - option "15"
+          - option "20"
+        - generic [ref=e17]: "?"
+      - button "▶ 运行测试" [ref=e18] [cursor=pointer]
+  - generic [ref=e19]:
+    - generic [ref=e20]:
+      - heading [level=3] [ref=e21]:
+        - text: 本轮测试用例
+        - button "+ 添加用例" [ref=e22] [cursor=pointer]
+        - button "导入预设" [ref=e23] [cursor=pointer]
+        - button "清空" [ref=e24] [cursor=pointer]
+      - generic [ref=e25]: 逐条填写提示词，运行时按顺序执行，每条用例独立会话。
+    - generic [ref=e26]:
+      - generic [ref=e28]:
+        - heading "测试轮次" [level=3] [ref=e29]
+        - generic [ref=e30]: 暂无轮次
+      - generic [ref=e32]: 填写上方用例后点击「运行测试」，或选择左侧历史轮次回看

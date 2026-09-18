@@ -1,0 +1,2211 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>睿云智能工作台 · UI 测试平台</title>
+<style>
+:root{
+  --bg:#f5f7fb; --card:#fff; --line:#e3e8f0; --line2:#eef2f7;
+  --tx:#1e293b; --tx2:#64748b; --tx3:#94a3b8;
+  --accent:#2563eb; --p0:#dc2626; --p1:#ea580c; --p2:#ca8a04;
+  --ok:#16a34a; --skill:#7c3aed;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--tx);font-family:"PingFang SC","Microsoft YaHei",sans-serif;font-size:14px;line-height:1.6;padding:0 0 60px}
+.wrap{max-width:1280px;margin:0 auto;padding:0 18px}
+
+/* ---------- 顶栏 ---------- */
+header{background:var(--card);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
+.hd{display:flex;align-items:center;gap:14px;padding:12px 0;flex-wrap:wrap}
+.hd h1{font-size:17px;font-weight:700}
+.hd .ver{font-size:12px;color:var(--tx3)}
+.spacer{flex:1}
+.badge{display:inline-block;padding:1px 9px;border-radius:20px;font-size:11px;font-weight:600;line-height:18px}
+.b-run{background:#dbeafe;color:#1d4ed8}
+.b-idle{background:#f1f5f9;color:#64748b}
+.b-ok{background:#dcfce7;color:#15803d}
+.b-err{background:#fee2e2;color:#b91c1c}
+select,input[type=number]{border:1px solid var(--line);border-radius:8px;padding:5px 8px;font-size:12.5px;color:var(--tx);background:#fff}
+.opt{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--tx2)}
+/* 参数说明：圆点问号 + 悬停气泡 */
+.q{position:relative;display:inline-flex;align-items:center;justify-content:center;
+  width:14px;height:14px;border-radius:50%;background:#e2e8f0;color:#64748b;
+  font-size:10px;font-weight:700;cursor:help;flex-shrink:0;user-select:none}
+.q:hover{background:var(--accent);color:#fff}
+.q::after{content:attr(data-tip);position:absolute;top:calc(100% + 8px);right:-6px;
+  width:290px;white-space:pre-line;background:#1e293b;color:#e2e8f0;font-size:11.5px;
+  font-weight:400;line-height:1.65;letter-spacing:0;text-align:left;padding:10px 12px;
+  border-radius:9px;box-shadow:0 6px 20px rgba(15,23,42,.28);
+  opacity:0;visibility:hidden;transition:opacity .15s;z-index:40;pointer-events:none}
+.q:hover::after{opacity:1;visibility:visible}
+/* 靠右边缘的元素：气泡贴右对齐、向左展开，避免溢出视口。
+   （不能只把 left 设为负值——那样气泡仍从该点向右延伸，照样越界。） */
+.q.tip-left::after{right:0;left:auto}
+/* 「签名上限」在复现关闭时无意义，置灰提示 */
+.opt.dimmed{opacity:.45}
+.opt.dimmed select{cursor:not-allowed}
+button{cursor:pointer;border:none;border-radius:9px;font-size:13px;font-weight:600;font-family:inherit}
+.btn-run{background:var(--accent);color:#fff;padding:8px 18px}
+.btn-run:hover{background:#1d4ed8}
+.btn-run:disabled{background:#94a3b8;cursor:not-allowed}
+.btn-ghost{background:#eef2f7;color:var(--tx2);padding:6px 12px;font-weight:500}
+
+/* ---------- 布局 ---------- */
+.grid{display:grid;grid-template-columns:270px 1fr;gap:16px;margin-top:16px}
+@media(max-width:960px){.grid{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+h3.sec{font-size:13px;font-weight:600;color:var(--tx2);margin-bottom:12px;display:flex;align-items:center;gap:7px}
+h3.sec::before{content:"";width:3px;height:13px;background:var(--accent);border-radius:2px}
+
+/* ---------- 控制台 ---------- */
+.console{background:#0f172a;color:#cbd5e1;font-family:ui-monospace,Menlo,monospace;font-size:11.5px;
+  border-radius:10px;padding:12px 14px;height:210px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;display:none}
+.console.on{display:block}
+.console .ln-time{color:#64748b}
+
+/* ---------- 轮次列表 ---------- */
+.round-item{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:9px;cursor:pointer;transition:.15s;position:relative}
+.round-item:hover{border-color:var(--accent)}
+.round-item.active{border-color:var(--accent);background:#f0f6ff}
+.round-item .rid{font-weight:600;font-size:12.5px}
+/* 轮次名链接：点它在访达中打开该轮次文件夹（不触发外层的 openRound） */
+.round-item .rid-link{color:inherit;text-decoration:none;border-bottom:1px dashed var(--tx3);cursor:pointer}
+.round-item .rid-link:hover{color:var(--accent);border-bottom-color:var(--accent)}
+.round-item .rmeta{font-size:11px;color:var(--tx3);margin-top:3px;display:flex;gap:8px;flex-wrap:wrap}
+/* 提示词摘要：单行截断，悬停看全文 */
+.round-item .rprompt{font-size:11.5px;color:var(--tx2);margin-top:6px;padding:4px 7px;
+  background:#f8fafc;border-left:2px solid var(--line);border-radius:0 5px 5px 0;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.round-item.active .rprompt{background:#eff6ff;border-left-color:var(--accent)}
+.round-item .rprompt .rp-more{color:var(--tx3);margin-left:4px;font-size:10.5px}
+/* 删除按钮：默认淡出，悬停轮次时才显现，避免误点 */
+.round-del{position:absolute;top:8px;right:8px;width:22px;height:22px;border-radius:6px;
+  background:#fef2f2;color:#b91c1c;font-size:14px;line-height:1;padding:0;
+  opacity:0;transition:opacity .15s}
+.round-item:hover .round-del,.round-del:focus{opacity:1}
+.round-del:hover{background:#fee2e2}
+.round-empty{color:var(--tx3);font-size:12px;text-align:center;padding:20px 0}
+
+/* ---------- KPI ---------- */
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:11px;margin-bottom:16px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:12px 14px}
+.kpi .label{font-size:11.5px;color:var(--tx2)}
+.kpi .value{font-size:24px;font-weight:700;margin-top:2px;letter-spacing:-.5px}
+.kpi .foot{font-size:10.5px;color:var(--tx3);margin-top:2px}
+.v-ok{color:var(--ok)} .v-bad{color:var(--p0)} .v-warn{color:var(--p1)} .v-acc{color:var(--accent)}
+
+/* ---------- Tab ---------- */
+.tabs{display:flex;gap:6px;margin:14px 0}
+.tab{padding:6px 14px;border-radius:8px;background:transparent;border:1px solid var(--line);font-size:12.5px;font-weight:600;color:var(--tx2)}
+.tab.active{background:var(--accent);border-color:var(--accent);color:#fff}
+
+/* ---------- 用例选择 ---------- */
+.case-chips{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:12px}
+.chip-c{padding:4px 12px;border-radius:20px;border:1px solid var(--line);font-size:12px;color:var(--tx2);cursor:pointer;background:#fff}
+.chip-c.active{border-color:var(--accent);color:var(--accent);background:#f0f6ff;font-weight:600}
+
+/* ---------- 轨迹时间线 ---------- */
+.tl{position:relative;padding-left:26px}
+.tl::before{content:"";position:absolute;left:8px;top:6px;bottom:6px;width:2px;background:var(--line)}
+.step{position:relative;margin-bottom:10px}
+.step .dot{position:absolute;left:-26px;top:5px;width:12px;height:12px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 0 1px var(--line)}
+.step.thinking .dot{background:#cbd5e1}
+.step.tool .dot{background:var(--accent)}
+.step.tool.fail .dot{background:var(--p0)}
+.step.tool.truncated .dot{background:var(--p1)}
+.step.skill .dot{background:var(--skill)}
+/* 平台自动确认：与思考(灰)/工具(蓝)/失败(红)区分 */
+.step.confirm .dot{background:var(--p2)}
+.badge.b-approx{background:#fef3c7;color:#b45309;font-weight:500;cursor:help}
+.step-head{display:flex;align-items:center;gap:8px;cursor:pointer;flex-wrap:wrap}
+.step-head .t-type{font-size:10.5px;color:var(--tx3);width:44px}
+.step-head .t-name{font-size:12.5px;font-weight:600}
+.step.thinking .t-name{color:var(--tx2);font-weight:400;font-size:12px}
+.step-head .mono{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:var(--tx3)}
+.step-body{display:none;margin:6px 0 0 44px;background:#f8fafc;border:1px solid var(--line2);border-radius:8px;padding:9px 11px;font-size:11.5px}
+.step.open .step-body{display:block}
+.kv{display:flex;gap:6px;margin-top:4px}
+.kv b{color:var(--tx2);font-weight:600;flex-shrink:0}
+.pre{font-family:ui-monospace,Menlo,monospace;color:var(--tx2);word-break:break-all}
+/* 全文展示：保留换行，过长时区域内滚动，避免把页面撑得无限高 */
+.pre-full{white-space:pre-wrap;max-height:420px;overflow-y:auto;line-height:1.7}
+.case-meta{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--tx2);margin:8px 0 14px}
+.answer{background:#f8fafc;border-left:3px solid var(--ok);border-radius:0 8px 8px 0;padding:9px 12px;font-size:12.5px;color:var(--tx2);margin-bottom:14px;white-space:pre-wrap}
+
+/* ---------- 表格 ---------- */
+table{width:100%;border-collapse:collapse;font-size:12px;background:var(--card)}
+th{text-align:left;font-weight:600;color:var(--tx2);background:#f8fafc;padding:8px 11px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:8px 11px;border-bottom:1px solid var(--line2);vertical-align:top}
+tr:last-child td{border-bottom:none}
+.mono{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:var(--tx2)}
+.tbl-card{border:1px solid var(--line);border-radius:11px;overflow:hidden}
+.track{display:inline-block;width:80px;height:12px;background:var(--line2);border-radius:4px;overflow:hidden;vertical-align:middle}
+.fill{height:100%;background:var(--accent)}
+.f-p0{background:var(--p0)} .f-p1{background:var(--p1)} .f-p2{background:var(--p2)}
+.empty{color:var(--tx3);font-size:12px;text-align:center;padding:18px}
+.finding{border:1px solid var(--line2);border-radius:10px;padding:11px 13px;margin-bottom:9px}
+.finding .f-detail{font-size:12.5px;margin-top:6px}
+.f-impact{font-size:12px;color:var(--tx2);margin-top:6px;background:#fff7ed;border-left:3px solid var(--p1);padding:7px 11px;border-radius:0 7px 7px 0}
+.f-impact b{color:#9a3412}
+.none-banner{background:var(--card);border:1px solid #bbf7d0;border-radius:12px;padding:34px 20px;text-align:center}
+.none-banner .big{font-size:20px;font-weight:700;color:var(--ok)}
+.none-banner .sm{font-size:12.5px;color:var(--tx2);margin-top:8px}
+.finding .f-detail{font-size:12.5px;margin-top:6px}
+.finding .evi{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:var(--tx3);background:#f8fafc;border:1px solid var(--line2);border-radius:6px;padding:6px 8px;margin-top:6px;word-break:break-all}
+.repro{margin-top:8px;border:1px solid var(--line2);border-radius:8px;padding:9px 11px;background:#fbfcfe;font-size:12px;color:var(--tx2)}
+.repro b{color:var(--tx)}
+.hidden{display:none}
+
+/* ---------- 用例编辑 ---------- */
+#caseEditor h3.sec{margin-bottom:12px}
+.cnt{margin-left:8px;font-weight:500;color:var(--tx3);font-size:11.5px}
+.case-row{display:flex;gap:9px;align-items:flex-start;margin-bottom:9px}
+.case-row .no{flex-shrink:0;width:30px;height:32px;display:flex;align-items:center;justify-content:center;
+  font-size:11.5px;color:var(--tx3);font-family:ui-monospace,Menlo,monospace}
+.case-row .fields{flex:1;display:flex;gap:8px;flex-wrap:wrap}
+.case-row input.prompt{flex:1;min-width:280px}
+.case-row input{border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:12.5px;
+  color:var(--tx);background:#fff;font-family:inherit}
+.case-row input:focus{outline:none;border-color:var(--accent)}
+.case-row .del{flex-shrink:0;width:32px;height:32px;background:#fef2f2;color:#b91c1c;border-radius:8px;font-size:15px;line-height:1}
+.case-row .del:hover{background:#fee2e2}
+.hint{font-size:11.5px;color:var(--tx3);margin-top:4px}
+.hint.warn{color:var(--warn)}
+
+/* ---------- 会话日志链接 ---------- */
+.sess-link{color:var(--accent);text-decoration:none;border-bottom:1px dashed var(--accent);cursor:pointer}
+.sess-link:hover{background:#eff6ff;border-bottom-style:solid}
+.sess-link.busy{opacity:.5;pointer-events:none}
+
+/* ---------- 导入预设弹窗 ---------- */
+/* ---------- 设置二级菜单 ---------- */
+.settings-wrap{position:relative}
+.settings-menu{display:none;position:absolute;top:calc(100% + 6px);right:0;z-index:60;
+  background:var(--card);border:1px solid var(--line);border-radius:10px;
+  box-shadow:0 8px 24px rgba(15,23,42,.12);padding:6px;min-width:190px}
+.settings-menu.on{display:block}
+.sm-item{display:flex;align-items:center;gap:8px;width:100%;text-align:left;
+  border:none;background:none;padding:8px 10px;border-radius:8px;cursor:pointer;
+  font-size:12.5px;font-family:inherit;color:var(--tx);white-space:nowrap}
+.sm-item:hover{background:#f1f5f9}
+/* ---------- 设置二级菜单 ---------- */
+.settings-wrap{position:relative}
+.settings-menu{display:none;position:absolute;top:calc(100% + 6px);right:0;z-index:60;
+  background:var(--card);border:1px solid var(--line);border-radius:10px;
+  box-shadow:0 8px 24px rgba(15,23,42,.12);padding:6px;min-width:190px}
+.settings-menu.on{display:block}
+.sm-item{display:flex;align-items:center;gap:8px;width:100%;text-align:left;
+  border:none;background:none;padding:8px 10px;border-radius:8px;cursor:pointer;
+  font-size:12.5px;font-family:inherit;color:var(--tx);white-space:nowrap}
+.sm-item:hover{background:#f1f5f9}
+/* 应用设置：路径输入框旁的「在访达中打开」按钮 */
+.inp-row{display:flex;gap:6px;align-items:center}
+.inp-row input{flex:1 1 auto}
+.reveal-btn{flex:0 0 auto;font-size:13.5px;line-height:1;padding:7px 9px;
+  border:1px solid var(--line);border-radius:8px;background:#fff;cursor:pointer}
+.reveal-btn:hover{border-color:var(--accent);background:#f0f6ff}
+.padd{padding:10px 14px;border-bottom:1px solid var(--line);background:#fafbfd}
+.padd-hd{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.padd-body{display:none;margin-top:10px}
+.padd-body.show{display:block}
+/* 新增表单卡片：与模型设置弹窗的 .fld/.pw-row 同一视觉语言 */
+.padd-card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:13px;
+  display:flex;flex-direction:column;gap:12px;box-shadow:0 1px 2px rgba(15,23,42,.04)}
+.fld textarea{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size:12.5px;
+  color:var(--tx);background:#fff;font-family:inherit;line-height:1.6;resize:vertical;min-height:70px;
+  transition:border-color .15s,box-shadow .15s}
+.fld textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(37,99,235,.12)}
+.padd-row{display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap;margin-top:4px}
+.padd-chips{display:flex;gap:6px;flex-wrap:wrap;min-height:32px;align-items:center}
+.padd-chips label{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;color:var(--tx2);
+  border:1px solid var(--line);border-radius:999px;padding:5px 11px;cursor:pointer;user-select:none;
+  transition:border-color .15s,background .15s,color .15s}
+.padd-chips label input{accent-color:var(--accent);margin:0;cursor:pointer}
+.padd-chips label:hover{border-color:var(--accent)}
+.padd-chips label:has(input:checked){border-color:var(--accent);background:#eff6ff;
+  color:var(--accent);font-weight:600}
+.prow .pdel{margin-left:auto;color:#b91c1c;cursor:pointer;font-size:11.5px;padding:2px 8px;
+  border-radius:8px;flex-shrink:0;opacity:.75}
+.prow .pdel:hover{background:#fee2e2;opacity:1}
+.modal-mask{position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:50;display:none;
+  align-items:flex-start;justify-content:center;padding:38px 16px}
+.modal-mask.on{display:flex}
+.modal{background:var(--card);border-radius:14px;width:min(900px,100%);
+  max-height:calc(100vh - 76px);display:flex;flex-direction:column;
+  box-shadow:0 18px 50px rgba(15,23,42,.32);overflow:hidden}
+.modal-hd{display:flex;align-items:center;gap:10px;padding:13px 18px;border-bottom:1px solid var(--line)}
+.modal-hd h3{font-size:14.5px;font-weight:700}
+.modal-hd .msub{font-size:11.5px;color:var(--tx3)}
+.modal-hd .mclose{margin-left:auto;width:28px;height:28px;border-radius:8px;background:#f1f5f9;
+  color:var(--tx2);font-size:14px;line-height:1}
+.modal-hd .mclose:hover{background:#e2e8f0}
+/* 筛选区 */
+.modal-filters{padding:11px 18px 12px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:7px}
+.mf-row{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.mf-label{flex-shrink:0;font-size:11.5px;color:var(--tx3);width:58px}
+.chip-c{padding:4px 12px;border-radius:20px;border:1px solid var(--line);font-size:12px;color:var(--tx2);cursor:pointer;background:#fff;user-select:none}
+.chip-c:hover{border-color:#c7d2fe}
+.chip-c.active{border-color:var(--accent);color:var(--accent);background:#f0f6ff;font-weight:600}
+.mf-kw{flex:1;min-width:180px;border:1px solid var(--line);border-radius:8px;padding:5px 10px;
+  font-size:12.5px;color:var(--tx);background:#fff;font-family:inherit}
+.mf-kw:focus{outline:none;border-color:var(--accent)}
+/* 用例列表 */
+.modal-list{flex:1;overflow-y:auto;padding:4px 10px;min-height:200px}
+.prow{display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:8px;cursor:pointer;border-bottom:1px solid var(--line2)}
+.prow:hover{background:#f8fafc}
+.prow.sel{background:#f0f6ff}
+.prow input[type=checkbox]{flex-shrink:0;accent-color:var(--accent);margin:0}
+.prow .pid{flex-shrink:0;width:76px;font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:var(--tx3)}
+.prow .pprompt{flex:1;font-size:12.5px;color:var(--tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.prow .ptags{flex-shrink:0;display:flex;gap:4px}
+.tag{font-size:10px;padding:1px 7px;border-radius:10px;background:#f1f5f9;color:var(--tx2);white-space:nowrap}
+.tag.t-scene{background:#eff6ff;color:#1d4ed8}
+.tag.t-att{background:#fef3c7;color:#92400e}
+.modal-empty{color:var(--tx3);font-size:12px;text-align:center;padding:40px 0}
+/* 底部操作区 */
+.modal-ft{display:flex;align-items:center;gap:8px;padding:12px 18px;border-top:1px solid var(--line);flex-wrap:wrap}
+.modal-ft .mcount{font-size:12px;color:var(--tx2);margin-right:auto}
+.modal-ft .mcount b{color:var(--accent)}
+.btn-primary{background:var(--accent);color:#fff;padding:7px 16px}
+.btn-primary:hover{background:#1d4ed8}
+.btn-primary:disabled{background:#94a3b8;cursor:not-allowed}
+.btn-stop{background:#fef2f2;color:#b91c1c;padding:8px 14px;font-weight:600}
+.btn-stop:hover{background:#fee2e2}
+
+/* ---------- 模型设置弹窗（大模型接入） ---------- */
+.llm-dot{width:7px;height:7px;border-radius:50%;background:#cbd5e1;flex-shrink:0}
+.llm-dot.on{background:var(--ok)}
+.modal.llm-modal{width:min(560px,92vw)}
+.llm-body{padding:16px 18px;display:flex;flex-direction:column;gap:13px;overflow-y:auto}
+.fld{display:flex;flex-direction:column;gap:5px}
+.fld label{font-size:12px;color:var(--tx2);font-weight:600}
+.fld input{border:1px solid var(--line);border-radius:9px;padding:8px 11px;font-size:12.5px;
+  color:var(--tx);background:#fff;font-family:inherit;
+  transition:border-color .15s,box-shadow .15s}
+.fld input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(37,99,235,.12)}
+.fld .fhint{font-size:11px;color:var(--tx3)}
+.fld.adv{display:none}
+.fld.adv.show{display:flex}
+.pw-row{display:flex;gap:7px}
+.pw-row input{flex:1;min-width:0}
+.pw-row .btn-ghost{flex-shrink:0;padding:0 11px}
+.adv-toggle{align-self:flex-start;background:none;border:none;padding:0;cursor:pointer;
+  font-size:11.5px;color:var(--accent);font-family:inherit;text-align:left}
+.adv-toggle:hover{text-decoration:underline}
+.probe-box{border:1px solid var(--line2);border-radius:10px;padding:10px 12px;font-size:12px;
+  background:#f8fafc;color:var(--tx2);line-height:1.65;word-break:break-word}
+.probe-box.ok{background:#f0fdf4;border-color:#bbf7d0;color:#15803d}
+.probe-box.err{background:#fef2f2;border-color:#fecaca;color:#b91c1c}
+.probe-box.busy{background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8}
+.probe-box .pb-detail{margin-top:6px;font-family:ui-monospace,Menlo,monospace;font-size:11px;
+  color:var(--tx3);max-height:120px;overflow-y:auto;white-space:pre-wrap;word-break:break-all}
+
+/* ---------- 质量评估 ---------- */
+.eval-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.pbar{height:9px;background:var(--line2);border-radius:5px;overflow:hidden;margin:0 0 10px}
+.pbar>i{display:block;height:100%;background:var(--accent);transition:width .4s}
+.dim-row{display:flex;align-items:center;gap:9px;padding:6px 0;border-bottom:1px solid var(--line2)}
+.dim-row:last-child{border-bottom:none}
+.dim-row .dname{flex-shrink:0;width:122px;font-size:12.5px;color:var(--tx)}
+.dim-row .dbar{flex:1;min-width:50px;height:9px;background:var(--line2);border-radius:5px;overflow:hidden}
+.dim-row .dbar>i{display:block;height:100%;background:var(--accent);transition:width .4s}
+.dim-row.warn .dbar>i{background:var(--p1)}
+.dim-row.bad .dbar>i{background:var(--p0)}
+.dim-row .dna{flex:1;font-size:11.5px;color:var(--tx3)}
+.src-tag{flex-shrink:0;font-size:10px;padding:1px 7px;border-radius:9px;border:1px solid var(--line);
+  color:var(--tx2);white-space:nowrap}
+.src-tag.objective{border-color:#bbf7d0;color:#15803d;background:#f0fdf4}
+.src-tag.llm{border-color:#ddd6fe;color:#6d28d9;background:#f5f3ff}
+.src-tag.hybrid{border-color:#fed7aa;color:#9a3412;background:#fff7ed}
+.eval-group{margin-bottom:14px}
+.eval-group h4{font-size:12.5px;color:var(--tx2);margin:0 0 8px;display:flex;align-items:center;
+  gap:8px;flex-wrap:wrap;font-weight:600}
+.gr-hint{font-size:10.5px;color:var(--tx3);font-weight:400}
+.eval-console{background:#0f172a;color:#cbd5e1;font-family:ui-monospace,Menlo,monospace;font-size:11px;
+  border-radius:9px;padding:9px 11px;max-height:170px;overflow-y:auto;line-height:1.7}
+/* ---------- 判分失败如实呈现 ---------- */
+/* 告警条：把「模型整轮没参与」摆在最上面，并给出可操作根因（如白名单 IP） */
+.ev-alert{border:1px solid #fecaca;background:#fef2f2;border-radius:10px;padding:10px 12px;margin:0 0 12px}
+.ev-alert-hd{font-size:12.5px;font-weight:700;color:#b91c1c;margin-bottom:5px}
+.ev-alert-bd{font-size:12px;color:#7f1d1d;line-height:1.7}
+.ev-alert-bd .mono{margin-top:5px;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#9f1239;
+  max-height:110px;overflow-y:auto;white-space:pre-wrap;word-break:break-word}
+/* 用例行上的标签（导入预设时随用例带过来） */
+.cl-tags{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px;align-items:center}
+/* 用例附件：行内上传 + 附件库复用 */
+.cl-acts{display:flex;gap:6px;margin-top:5px}
+.cl-att{font-size:11px;padding:2px 9px;border:1px solid var(--line);border-radius:8px;
+  background:#fff;color:var(--tx2);cursor:pointer;font-family:inherit}
+.cl-att:hover{border-color:var(--accent);color:var(--accent)}
+/* 附件库弹窗：列表形式，一行一个附件（文件名 + 大小 + 绝对路径）。
+   路径是驱动真正投递给应用的东西，必须可见 —— 所以不做成横向 chips；
+   嵌在用例行里又会把行撑高、遮挡其它用例，故独立成弹窗。 */
+.modal.lib-modal{width:min(720px,92vw)}
+.lib-del{color:#b91c1c;cursor:pointer;font-size:11.5px;padding:2px 8px;border-radius:8px;opacity:.75}
+.lib-del:hover{background:#fee2e2;opacity:1}
+.lib-row{display:flex;align-items:center;gap:12px;padding:9px 10px;border-radius:8px;
+  cursor:pointer;border-bottom:1px solid var(--line2)}
+.lib-row:last-child{border-bottom:none}
+.lib-row:hover{background:#f8fafc}
+.lib-row.used{cursor:default;opacity:.6}
+.lib-row.used:hover{background:transparent}
+.lib-main{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:2px}
+.lib-name{font-size:12.5px;color:var(--tx);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lib-path{font-size:10.5px;color:var(--tx3);font-family:ui-monospace,Menlo,monospace;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lib-meta{flex:0 0 auto;display:flex;align-items:center;gap:9px}
+.lib-size{font-size:10.5px;color:var(--tx3);white-space:nowrap}
+.lib-add{font-size:10.5px;color:var(--accent);border:1px solid var(--line);border-radius:8px;
+  padding:2px 8px;background:#fff;white-space:nowrap}
+.lib-row:hover .lib-add{border-color:var(--accent)}
+.lib-row.used .lib-add{color:var(--tx3);border-color:transparent;background:transparent}
+.tag.t-att{border-color:#bfdbfe;background:#eff6ff;color:#1d4ed8;max-width:280px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tag-x{margin-left:5px;color:var(--tx3);cursor:pointer;font-weight:700}
+.tag-x:hover{color:var(--p0)}
+/* ---------- 评估结果表：表头固定三类（结果质量/教学专业质量 · 安全与可靠 · 系统与 Agent 能力） ---------- */
+.ev-tbl{width:100%;border-collapse:collapse;table-layout:fixed}
+.ev-tbl th{font-size:11.5px;font-weight:700;color:var(--tx2);text-align:left;padding:9px 12px;
+  border-bottom:1px solid var(--line);background:#f8fafc;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+.ev-tbl td{padding:7px 12px;border-bottom:1px solid var(--line2);vertical-align:middle}
+.ev-tbl tbody tr:last-child td{border-bottom:none}
+.ev-tbl td.evt-empty{background:#fcfcfd}
+.evt-row{display:flex;align-items:center;gap:8px;min-width:0}
+/* 指标名与分数各自带 hover 说明（前者=评分标准，后者=判定理由），
+   cursor:help 让「这里可以悬停看说明」可见，而不是只能靠猜。
+   指标名一律 flex:0 1 auto（不增长）：盒子只包住文字本身，行内空白不再弹出提示；
+   分数侧用 margin-left:auto 靠右，而不是把指标名拉伸填满整行。 */
+.evt-name{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--tx);
+  flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  cursor:help}
+.evt-val{flex:0 0 auto;display:inline-flex;align-items:baseline;gap:5px;cursor:help;
+  margin-left:auto}
+.evt-score{font-size:13.5px;color:var(--tx)}
+.evt-score.ok{color:#15803d}
+.evt-score.warn{color:#b45309}
+.evt-score.bad{color:#b91c1c}
+.evt-n{font-size:10.5px;color:var(--tx3)}
+.evt-na{flex:0 0 auto;margin-left:auto;font-size:11.5px;color:var(--tx3);max-width:56%;cursor:help;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.evt-na i{margin-left:4px;font-style:normal;font-size:10.5px}
+/* 美观度行的「查看产物」：轻量文字按钮，复用 /api/reveal 在 Finder 中定位。
+   无可用产物时置灰禁用，不隐藏 —— 让「没有产物 / 找不到文件」可见，而不是静默消失 */
+.evt-art{flex:0 0 auto;font-size:10.5px;color:var(--accent);cursor:pointer;
+  border:1px solid var(--line);border-radius:9px;padding:1px 7px;white-space:nowrap;
+  text-decoration:none;background:#f8fafc}
+.evt-art:hover{background:#eef2ff;border-color:#c7d2fe}
+.evt-art.disabled{color:var(--tx3);cursor:not-allowed;background:#fafafa;opacity:.75}
+.ev-tbl tfoot td{background:#f8fafc;border-top:1px solid var(--line);padding:9px 12px}
+.evt-total{font-size:12px;color:var(--tx2)}
+.evt-total b{font-size:14px;color:var(--tx);margin-left:2px}
+/* ---------- 逐用例评分卡（每个用例一张三列表格） ---------- */
+.ev-case{padding:0;margin-bottom:14px;overflow:hidden}
+.ev-case-hd{padding:10px 12px;border-bottom:1px solid var(--line2);background:#fcfcfd}
+.ev-case-tt{display:flex;align-items:baseline;gap:8px;min-width:0}
+.ev-case-prompt{font-size:12px;color:var(--tx2);flex:1 1 auto;min-width:0;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ev-case-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px}
+.ev-case-err{margin-top:7px;font-size:11.5px;color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;
+  border-radius:8px;padding:7px 9px;line-height:1.7;word-break:break-word}
+.ev-case-err .pb-detail{margin-top:5px;font-family:ui-monospace,Menlo,monospace;font-size:11px;
+  color:#9f1239;max-height:110px;overflow-y:auto;white-space:pre-wrap;word-break:break-all}
+/* 判分依据留档：默认折叠，点击展开（用于核对「模型当时看到了什么」） */
+.ev-facts{cursor:pointer;border-top:1px solid var(--line);padding:8px 12px;background:#fbfcfe}
+.ev-facts-hd{font-size:11.5px;color:var(--tx2);font-weight:600}
+.ev-facts-tip{margin-left:6px;font-size:10.5px;color:var(--tx3);font-weight:400}
+.ev-facts .pb-detail{display:none;color:var(--tx2)}
+.ev-facts.open .pb-detail{display:block;max-height:260px;overflow-y:auto}
+.tag-infer{margin-left:5px;font-size:10px;padding:0 5px;border-radius:8px;
+  border:1px dashed #c7d2fe;color:#4338ca;background:#eef2ff;cursor:help}
+.case-eval{border:1px solid var(--line2);border-radius:10px;margin-bottom:9px;overflow:hidden}
+.case-eval .ce-hd{display:flex;gap:8px;align-items:center;padding:9px 12px;cursor:pointer;flex-wrap:wrap}
+.case-eval .ce-hd:hover{background:#f8fafc}
+.case-eval .ce-body{display:none;padding:4px 12px 11px;border-top:1px solid var(--line2)}
+.case-eval.open .ce-body{display:block}
+.pill{font-size:10.5px;padding:2px 8px;border-radius:9px;background:#f1f5f9;color:var(--tx2);white-space:nowrap}
+.pill.ok{background:#dcfce7;color:#15803d}
+.pill.warn{background:#ffedd5;color:#9a3412}
+.pill.bad{background:#fee2e2;color:#b91c1c}
+.pill.na{background:#f1f5f9;color:#94a3b8}
+</style>
+</head>
+<body>
+
+<header><div class="wrap hd">
+  <h1>睿云智能工作台 · UI 测试平台</h1>
+  <span class="ver" id="ver"></span>
+  <span class="badge b-idle" id="statusBadge">空闲</span>
+  <div class="spacer"></div>
+  <span class="opt" id="wrapEnv">环境
+    <select id="optEnv"></select>
+    <span class="q" data-tip="应用【启动时】注入对应环境变量，运行中的实例无法改环境：
+- 应用未运行 → 可选环境，选择后写入 config.yaml，下次启动生效
+- 应用运行中 → 选择器只读（置灰），需先关闭实例
+注意：环境切换只影响下次启动。">?</span>
+  </span>
+  <span class="opt">
+    <button class="btn-ghost" id="btnCloseApp" title="关闭应用实例">✕ 关闭实例</button>
+    <span class="q" data-tip="关闭当前运行的应用实例（含手动从 Dock 启动的）。
+关闭后可重新选择环境，下次运行时会按所选环境启动。
+测试运行期间不可关闭。">?</span>
+  </span>
+  <span class="opt settings-wrap">
+    <button class="btn-ghost" id="btnSettings">⚙ 设置 ▾</button>
+    <div class="settings-menu" id="settingsMenu">
+      <button class="sm-item" data-act="app">🖥 应用与工作区</button>
+      <button class="sm-item" data-act="model" id="smModel"><span class="llm-dot" id="llmDot"></span>模型设置</button>
+    </div>
+    <span class="q" data-tip="设置二级菜单：
+- 应用与工作区：被测应用路径 / 会话日志目录 / 用户工作区目录，
+  每个路径旁的 📁 按钮可在访达中打开当前生效路径
+- 模型设置：供应商地址与 API Key（用于质量评估）
+工作区内含预设用例、附件库、轮次归档与 config.yaml。">?</span>
+  </span>
+  <!-- 复现次数 / 签名上限 暂时下线（后端能力保留，需要时恢复此区块并还原 btnRun 参数） -->
+  <span class="opt" id="wrapInflight">并发数
+    <select id="optInflight">
+      <option value="1">1</option><option value="2">2</option>
+      <option value="3">3</option><option value="5" selected>5</option>
+      <option value="8">8</option><option value="10">10</option>
+      <option value="15">15</option><option value="20">20</option>
+    </select>
+    <span class="q" data-tip="同时在生成中的用例上限（流水线并发）：
+一条用例完成收取后，立即补入下一条待跑用例，
+窗口内始终最多 N 条用例在执行，避免一次塞入过多用例拖垮客户端。
+默认 5；选 1 退化为完全串行。
+控制台日志中的「在途 n/N」即当前并发水位。">?</span>
+  </span>
+  <button class="btn-run" id="btnRun">▶ 运行测试</button>
+  <button class="btn-stop" id="btnStop" style="display:none" title="终止当前测试（本轮不产出报告）">■ 终止测试</button>
+</div></header>
+
+<div class="wrap">
+<div class="console" id="console"></div>
+
+<!-- ============ 本轮用例（手动输入） ============ -->
+<div class="card" id="caseEditor" style="margin-bottom:16px">
+  <h3 class="sec">本轮测试用例<span id="caseCount" class="cnt"></span>
+    <div class="spacer"></div>
+    <button class="btn-ghost" id="btnAddCase">+ 添加用例</button>
+    <button class="btn-ghost" id="btnImport">导入预设</button>
+    <button class="btn-ghost" id="btnClearCases">清空</button>
+  </h3>
+  <div id="caseRows"></div>
+  <div class="hint" id="caseHint">逐条填写提示词，运行时按顺序执行，每条用例独立会话。</div>
+</div>
+
+<div class="grid">
+  <!-- 轮次列表 -->
+  <div>
+    <div class="card">
+      <h3 class="sec">测试轮次</h3>
+      <div id="roundList"><div class="round-empty">暂无轮次</div></div>
+    </div>
+  </div>
+
+  <!-- 详情 -->
+  <div id="detailPane">
+    <div class="card"><div class="empty">填写上方用例后点击「运行测试」，或选择左侧历史轮次回看</div></div>
+  </div>
+</div>
+</div>
+
+<!-- ============ 预设用例管理弹窗（导入 / 新增 / 删除） ============ -->
+<div class="modal-mask" id="importMask">
+  <div class="modal" role="dialog" aria-label="预设用例管理">
+    <div class="modal-hd">
+      <h3>预设用例管理</h3>
+      <span class="msub" id="impSub"></span>
+      <button class="mclose" id="impClose" title="关闭（不导入）">✕</button>
+    </div>
+    <div class="padd">
+      <div class="padd-hd">
+        <button class="btn-ghost" id="paddToggle">+ 新增预设用例</button>
+        <span class="fhint">新增 / 删除直接写入 testcases.yaml，立即生效；勾选下方用例再「导入所选」加入本轮</span>
+      </div>
+      <div class="padd-body" id="paddBody">
+        <div class="padd-card">
+          <div class="fld">
+            <label for="paddPrompt">提示词 <span style="color:var(--p0)">*</span></label>
+            <textarea id="paddPrompt" rows="3" placeholder="填入要加入预设的问题原文（必填）…"></textarea>
+          </div>
+          <div class="padd-row">
+            <div class="fld" style="flex:0 0 180px">
+              <label for="paddScene">场景（选填）</label>
+              <input id="paddScene" list="paddScenes" placeholder="如：备课" autocomplete="off"/>
+              <datalist id="paddScenes"></datalist>
+            </div>
+            <div class="fld" style="flex:1 1 260px">
+              <label>测试目标（选填，可多选）</label>
+              <span class="padd-chips" id="paddTargets">
+                <label><input type="checkbox" value="word"/>word</label>
+                <label><input type="checkbox" value="ppt"/>ppt</label>
+                <label><input type="checkbox" value="html"/>html</label>
+                <label><input type="checkbox" value="pdf"/>pdf</label>
+                <label><input type="checkbox" value="excel"/>excel</label>
+                <label><input type="checkbox" value="network"/>network</label>
+              </span>
+            </div>
+            <div class="fld" style="flex:0 0 auto">
+              <label>附件上传</label>
+              <span class="padd-chips">
+                <label><input type="checkbox" id="paddAtt"/>需要附件</label>
+              </span>
+            </div>
+            <div class="fld" style="flex:0 0 auto;margin-left:auto">
+              <label>&nbsp;</label>
+              <button class="btn-primary" id="paddOk">保存为新预设</button>
+            </div>
+          </div>
+          <div class="fhint" id="paddMsg"></div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-filters">
+      <div class="mf-row" id="impSceneRow">
+        <span class="mf-label">场景</span>
+        <span class="mf-row" id="impSceneChips" style="width:auto"></span>
+      </div>
+      <div class="mf-row" id="impTargetRow">
+        <span class="mf-label">测试目标</span>
+        <span class="mf-row" id="impTargetChips" style="width:auto"></span>
+      </div>
+      <div class="mf-row" id="impAttRow">
+        <span class="mf-label">附件上传</span>
+        <span class="mf-row" id="impAttChips" style="width:auto"></span>
+      </div>
+      <div class="mf-row">
+        <span class="mf-label">关键词</span>
+        <input class="mf-kw" id="impKw" placeholder="按提示词内容过滤（可选）"/>
+      </div>
+    </div>
+    <div class="modal-list" id="impList"></div>
+    <div class="modal-ft">
+      <span class="mcount" id="impCount"></span>
+      <button class="btn-ghost" id="impAll">全选</button>
+      <button class="btn-ghost" id="impInvert">反选</button>
+      <button class="btn-ghost" id="impNone">全部取消</button>
+      <button class="btn-ghost" id="impCancel">取消</button>
+      <button class="btn-primary" id="impOk">导入所选</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 附件库弹窗（为某条用例挑选已上传的附件） ============ -->
+<div class="modal-mask" id="libMask">
+  <div class="modal lib-modal" role="dialog" aria-label="附件库">
+    <div class="modal-hd">
+      <h3>附件库</h3>
+      <span class="msub" id="libSub"></span>
+      <button class="mclose" id="libClose" title="关闭">✕</button>
+    </div>
+    <div class="modal-list" id="libList"></div>
+    <div class="modal-ft">
+      <span class="mcount" id="libCount"></span>
+      <button class="btn-primary" id="libDone">完成</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 模型设置弹窗（大模型接入） ============ -->
+<div class="modal-mask" id="llmMask">
+  <div class="modal llm-modal" role="dialog" aria-label="模型设置">
+    <div class="modal-hd">
+      <h3>模型设置</h3>
+      <span class="msub">配置仅保存在本机浏览器</span>
+      <button class="mclose" id="llmClose" title="关闭">✕</button>
+    </div>
+    <div class="llm-body">
+      <div class="fld">
+        <label for="llmBase">供应商地址 <span style="color:var(--p0)">*</span></label>
+        <input id="llmBase" type="text" placeholder="https://api.example.com/v1" autocomplete="off" spellcheck="false"/>
+      </div>
+      <div class="fld">
+        <label for="llmKey">API Key <span style="color:var(--p0)">*</span></label>
+        <div class="pw-row">
+          <input id="llmKey" type="password" placeholder="sk-…" autocomplete="new-password" spellcheck="false"/>
+          <button class="btn-ghost" id="llmKeyToggle" type="button" title="显示 / 隐藏">显示</button>
+        </div>
+        <span class="fhint">打开本弹窗时自动回显服务端已保存的 Key（默认密码态隐藏，点「显示」查看）；未改动 Key 可直接保存，留空保存则沿用服务端 Key。</span>
+      </div>
+      <div class="fld">
+        <label for="llmModel">模型名 <span style="color:var(--p0)">*</span></label>
+        <input id="llmModel" type="text" placeholder="gpt-4o-mini / qwen-plus / ep-xxxxxxxx …" autocomplete="off" spellcheck="false"/>
+        <span class="fhint">必填：留空会让判分请求带上占位模型名而失败（TokenHub 等需填模型名或端点 ID）</span>
+      </div>
+      <button class="adv-toggle" id="llmAdvToggle" type="button">▸ 高级：自定义探活路径</button>
+      <div class="fld adv" id="llmAdvWrap">
+        <label for="llmPath">探活路径（选填）</label>
+        <input id="llmPath" type="text" placeholder="/models，留空则自动探测" autocomplete="off" spellcheck="false"/>
+        <span class="fhint">填写后覆盖默认探测（默认先 GET /models，再回退 POST /chat/completions）</span>
+      </div>
+      <div class="probe-box" id="llmProbe">填写后点击「测试连接」进行校验</div>
+    </div>
+    <div class="modal-ft">
+      <span class="mcount" id="llmState"></span>
+      <button class="btn-ghost" id="llmClear" title="清除已保存的配置与本机存储">清空</button>
+      <button class="btn-ghost" id="llmCancel">取消</button>
+      <button class="btn-ghost" id="llmTest">测试连接</button>
+      <button class="btn-primary" id="llmSave" disabled>保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 应用设置弹窗（被测应用路径 / 会话日志目录） ============ -->
+<div class="modal-mask" id="appMask">
+  <div class="modal llm-modal" role="dialog" aria-label="应用设置">
+    <div class="modal-hd">
+      <h3>应用设置</h3>
+      <span class="msub">不配置则使用内置默认地址</span>
+      <button class="mclose" id="appCfgClose" title="关闭">✕</button>
+    </div>
+    <div class="llm-body">
+      <div class="fld">
+        <label for="appBinInp">被测应用可执行文件路径（选填）</label>
+        <div class="inp-row">
+          <input id="appBinInp" type="text" autocomplete="off" spellcheck="false"
+                 placeholder="/Applications/睿云智能工作台.app/Contents/MacOS/睿云智能工作台"/>
+          <button class="reveal-btn" onclick="revealCfgPath('binary')"
+                  title="在访达中打开当前生效的应用路径">📁</button>
+        </div>
+        <span class="fhint">留空使用默认：/Applications/睿云智能工作台.app/Contents/MacOS/睿云智能工作台</span>
+      </div>
+      <div class="fld">
+        <label for="appLogInp">会话日志根目录（选填）</label>
+        <div class="inp-row">
+          <input id="appLogInp" type="text" autocomplete="off" spellcheck="false"
+                 placeholder="~/.srtclaw/workspace/session"/>
+          <button class="reveal-btn" onclick="revealCfgPath('session_root')"
+                  title="在访达中打开当前生效的日志目录">📁</button>
+        </div>
+        <span class="fhint">被测应用产生的日志地址（sess_* 会话目录的父目录）。留空使用默认：~/.srtclaw/workspace/session</span>
+      </div>
+      <div class="fld">
+        <label for="wsInp">用户工作区目录（选填）</label>
+        <div class="inp-row">
+          <input id="wsInp" type="text" autocomplete="off" spellcheck="false"/>
+          <button class="reveal-btn" onclick="revealCfgPath('workspace')"
+                  title="在访达中打开当前生效的工作区目录">📁</button>
+        </div>
+        <span class="fhint">非功能性数据（预设用例 testcases.yaml、附件库 uploads/、轮次归档 rounds/、config.yaml）的存放目录。留空使用 ~/.ruiyun-autotest；改动后旧数据自动迁移到新目录</span>
+      </div>
+      <div class="probe-box" id="appCfgState" style="display:none"></div>
+    </div>
+    <div class="modal-ft">
+      <span class="mcount" id="appCfgSrc"></span>
+      <button class="btn-ghost" id="appCfgReset" title="删除本机覆盖，回退 config.yaml / 内置默认">恢复默认</button>
+      <button class="btn-ghost" id="appCfgCancel">取消</button>
+      <button class="btn-primary" id="appCfgSave">保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ================= 状态 ================= */
+let RUNNING=false, pollTimer=null, currentRound=null, currentCase=0, currentTab='trace';
+
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmtPct=v=>(v==null?'—':(v*100).toFixed(0)+'%');
+
+/* ================= 环境与应用实例 ================= */
+/* 应用运行中 → 环境只读、关闭可用；未运行 → 环境可选、关闭置灰。
+   环境变量只在启动时注入，因此运行中切环境无意义，必须禁止。 */
+let ENV_CFG=null;
+
+async function loadEnv(){
+  try{
+    ENV_CFG = await (await fetch('/api/env')).json();
+  }catch(e){ return; }
+  const sel=$('optEnv');
+  if(!ENV_CFG.profiles){ sel.innerHTML=''; return; }
+  sel.innerHTML = ENV_CFG.profiles.map(p=>
+    `<option value="${esc(p.key)}" title="${esc(p.desc)}">${esc(p.label)}</option>`).join('');
+  if(ENV_CFG.profiles.some(p=>p.key===ENV_CFG.current)) sel.value=ENV_CFG.current;
+  syncEnvUI();
+}
+
+function syncEnvUI(){
+  if(!ENV_CFG) return;
+  const running = !!ENV_CFG.app_running;
+  $('optEnv').disabled = running;                       // 运行中只读
+  $('wrapEnv').classList.toggle('dimmed', running);
+  // 关闭按钮：有实例可关、且当前没有测试在跑时才可用
+  const closable = running && !RUNNING;
+  $('btnCloseApp').disabled = !closable;
+  $('btnCloseApp').title = running
+    ? (RUNNING ? '有测试正在运行，无法关闭' : '关闭应用实例')
+    : '应用当前未运行';
+}
+
+async function refreshAppStatus(){
+  try{
+    const j=await (await fetch('/api/app/status')).json();
+    if(ENV_CFG){ ENV_CFG.app_running=!!j.running; syncEnvUI(); }
+  }catch(e){}
+}
+
+$('optEnv').onchange = async ()=>{
+  const key=$('optEnv').value;
+  try{
+    const r=await fetch('/api/env',{method:'POST',headers:{'Content-Type':'application/json'},
+                                   body:JSON.stringify({profile:key})});
+    const j=await r.json();
+    if(!j.ok){ alert('切换环境失败：'+(j.message||'未知错误')); await loadEnv(); return; }
+    ENV_CFG=j; syncEnvUI();
+    const label=((j.profiles||[]).find(p=>p.key===j.current)||{}).label||j.current;
+    alert(`已切换到「${label}」\n\n该设置将在下次启动应用时生效。`);
+  }catch(e){ alert('请求失败：'+e.message); await loadEnv(); }
+};
+
+$('btnCloseApp').onclick = async ()=>{
+  if(!confirm('确定关闭应用实例？\n\n关闭后才能重新选择环境；下次运行测试时会按所选环境重新启动。')) return;
+  $('btnCloseApp').disabled=true;
+  try{
+    const r=await fetch('/api/app/close',{method:'POST'});
+    const j=await r.json();
+    if(!j.ok){ alert('关闭失败：'+(j.message||'未知错误')); }
+    await refreshAppStatus();
+  }catch(e){ alert('请求失败：'+e.message); }
+  await refreshAppStatus();
+};
+
+/* ================= 模型设置（大模型接入） ================= */
+/* 配置存服务端独立密钥文件（0600、不进版本库）；接口只回脱敏信息，绝不回显明文 Key。
+   「测试连接」仍用表单当前填写的 Key 走 /api/llm/test 透传，不落盘。 */
+const LLM_STORE='ruiyun_llm_cfg';        // 旧版本地存储键，仅用于一次性迁移
+let LLM_SRV={configured:false,base_url:'',model:'',key_hint:'',saved_at:''};
+let LLM_TESTED=false;                    // 当前表单是否已通过连接测试
+
+async function loadLLM(){
+  try{ LLM_SRV=await (await fetch('/api/llm/config')).json(); }
+  catch(e){ LLM_SRV={configured:false,base_url:'',model:''}; }
+  // 自动回显：把服务端已保存的 Key 拉到前端内存（openLlm 填入输入框，
+  // 默认密码态隐藏）。Key 只随显式的 reveal 请求流转，不进 GET 默认响应。
+  try{
+    const r=await fetch('/api/llm/config',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({reveal:true})});
+    const j=await r.json();
+    if(j.ok) LLM_SRV.api_key=j.api_key||'';
+  }catch(e){}
+  syncLLMBadge();
+}
+function syncLLMBadge(){
+  const dot=$('llmDot'); if(!dot) return;
+  dot.classList.toggle('on', !!LLM_SRV.configured);
+  // 「模型设置」入口已收进设置二级菜单（原顶栏按钮 btnLlm 已删除）
+  const item=$('smModel');
+  if(item) item.title = LLM_SRV.configured ? ('已配置：'+LLM_SRV.base_url) : '未配置模型';
+}
+/* 旧版把配置存在浏览器本地：一次性迁移到服务端后清除本地副本。 */
+async function migrateLocalLLM(){
+  let old=null;
+  try{ old=JSON.parse(localStorage.getItem(LLM_STORE)||'null'); }catch(e){ old=null; }
+  if(!old || !old.base_url || !old.api_key) return false;
+  try{
+    const r=await fetch('/api/llm/config',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({base_url:old.base_url,api_key:old.api_key,model:old.model||''})});
+    const j=await r.json();
+    if(j.ok){ localStorage.removeItem(LLM_STORE); LLM_SRV=j; syncLLMBadge(); return true; }
+  }catch(e){}
+  return false;
+}
+function llmForm(){
+  return {
+    base_url:$('llmBase').value.trim(),
+    api_key:$('llmKey').value.trim(),
+    model:$('llmModel').value.trim(),
+    probe_path:$('llmPath').value.trim(),
+  };
+}
+function llmProbeBox(kind,msg,detail){
+  const box=$('llmProbe');
+  box.className='probe-box'+(kind?(' '+kind):'');
+  box.innerHTML=esc(msg)+(detail?`<div class="pb-detail">${esc(detail)}</div>`:'');
+}
+function llmInvalidate(){
+  LLM_TESTED=false;
+  // 自动回显的原 Key 未被改动时仍允许直接保存（免重测），其余字段改动也需重测
+  $('llmSave').disabled=!!($('llmKey').value.trim() && $('llmKey').value.trim()!==(LLM_SRV.api_key||''));
+  $('llmState').textContent=$('llmSave').disabled?'需重新测试':'Key 未改动，可直接保存';
+}
+async function openLlm(){
+  const migrated=await migrateLocalLLM();
+  if(!migrated) await loadLLM();
+  $('llmBase').value=LLM_SRV.base_url||'';
+  // 默认行为：自动回显服务端已保存的 Key（密码态隐藏，点「显示」查看）
+  $('llmKey').value=LLM_SRV.api_key||'';
+  $('llmModel').value=LLM_SRV.model||'';
+  $('llmPath').value='';
+  $('llmKey').placeholder=LLM_SRV.configured?'已配置；留空保存则沿用服务端 Key':'sk-…';
+  $('llmKey').type='password'; $('llmKeyToggle').textContent='显示';
+  LLM_TESTED=false;
+  // 已保存过配置 → 回显的 Key 未改动，可直接保存；未配置 → 必须先测试
+  $('llmSave').disabled=!LLM_SRV.configured;
+  $('llmState').textContent=LLM_SRV.configured?'已自动回显服务端 Key（未改动可直接保存）':'未配置';
+  llmProbeBox('', migrated?'已将浏览器中的旧配置迁移到服务端'
+                          :'填写后点击「测试连接」进行校验');
+  $('llmMask').classList.add('on');
+}
+function closeLlm(){ $('llmMask').classList.remove('on'); }
+
+async function testLLM(){
+  const f=llmForm();
+  if(!f.base_url){ llmProbeBox('err','请填写模型供应商地址'); return; }
+  if(!f.api_key){ llmProbeBox('err','请填写 API Key'); return; }
+  if(!f.model){ llmProbeBox('err','请填写模型名（或端点 ID）：留空会让判分请求带上占位模型名而失败'); return; }
+  const btn=$('llmTest'); btn.disabled=true;
+  llmProbeBox('busy','正在测试连接…'); $('llmState').textContent='测试中';
+  try{
+    const r=await fetch('/api/llm/test',{method:'POST',headers:{'Content-Type':'application/json'},
+                                          body:JSON.stringify(f)});
+    // 非 JSON 响应（被拦截 / 服务异常）不能直接 r.json()，否则只会抛出笼统错误
+    const raw=await r.text();
+    let j; try{ j=JSON.parse(raw); }
+    catch(e){ j={ok:false,message:`本地服务返回异常（HTTP ${r.status}）：${(raw||'').slice(0,120)}`}; }
+    if(j.ok){
+      LLM_TESTED=true;
+      $('llmSave').disabled=false; $('llmState').textContent='验证通过';
+      llmProbeBox('ok',`✓ ${j.message}（${j.latency_ms}ms · 阶段 ${j.stage}）`,j.detail||'');
+    }else{
+      llmInvalidate(); $('llmState').textContent='验证失败';
+      llmProbeBox('err',`✗ ${j.message||'测试失败'}${j.status?`（HTTP ${j.status}）`:''}`,j.detail||'');
+    }
+  }catch(e){
+    llmInvalidate(); $('llmState').textContent='请求失败';
+    llmProbeBox('err','请求本地服务失败：'+e.message);
+  }
+  btn.disabled=false;
+}
+
+$('llmClose').onclick=closeLlm;
+$('llmCancel').onclick=closeLlm;
+$('llmClear').onclick=async()=>{
+  if(!confirm('清空服务端已保存的模型配置？')) return;
+  try{
+    await fetch('/api/llm/config',{method:'POST',headers:{'Content-Type':'application/json'},
+                                   body:JSON.stringify({clear:true})});
+  }catch(e){}
+  try{ localStorage.removeItem(LLM_STORE); }catch(e){}
+  LLM_SRV={configured:false,base_url:'',model:''};
+  ['llmBase','llmKey','llmModel','llmPath'].forEach(id=>{ $(id).value=''; });
+  LLM_TESTED=false; $('llmSave').disabled=true; $('llmState').textContent='已清空';
+  syncLLMBadge();
+  llmProbeBox('','已清空服务端配置');
+};
+$('llmMask').onclick=e=>{ if(e.target===$('llmMask')) closeLlm(); };
+$('llmTest').onclick=testLLM;
+$('llmKeyToggle').onclick=()=>{
+  const el=$('llmKey'), show=el.type==='password';
+  el.type=show?'text':'password';
+  $('llmKeyToggle').textContent=show?'隐藏':'显示';
+};
+/* llmKeyFill 按钮已移除：回显是默认行为（loadLLM 自动拉取，openLlm 自动填入） */
+$('llmAdvToggle').onclick=()=>{
+  const w=$('llmAdvWrap'); w.classList.toggle('show');
+  $('llmAdvToggle').textContent=(w.classList.contains('show')?'▾ ':'▸ ')+'高级：自定义探活路径';
+};
+$('llmSave').onclick=async()=>{
+  const f0=llmForm();
+  // Key 未改动（自动回显的原值或留空沿用）→ 无需重测；改了 Key 才要求先测试
+  if(!LLM_TESTED && f0.api_key && f0.api_key !== (LLM_SRV.api_key||'')){
+    alert('API Key 已修改，请先完成「测试连接」再保存'); return;
+  }
+  const f=llmForm(), btn=$('llmSave');
+  btn.disabled=true;
+  try{
+    const body={base_url:f.base_url,model:f.model,keep_key:true};
+    if(f.api_key) body.api_key=f.api_key;
+    const r=await fetch('/api/llm/config',{method:'POST',headers:{'Content-Type':'application/json'},
+                                          body:JSON.stringify(body)});
+    const j=await r.json();
+    if(!j.ok){ alert('保存失败：'+(j.message||'未知错误')); btn.disabled=false; return; }
+    LLM_SRV=j; syncLLMBadge();
+    $('llmState').textContent='已保存';
+    llmProbeBox('ok','✓ 已保存到服务端（0600 权限，不进版本库）');
+    setTimeout(closeLlm,600);
+  }catch(e){ alert('请求失败：'+e.message); btn.disabled=false; }
+};
+/* ================= 应用设置（被测应用路径 / 会话日志目录） ================= */
+/* 三层优先级：.app_settings.json（本机覆盖，0600）> config.yaml > 内置默认。
+   输入框留空 = 不覆盖（回退下层）；保存后下次运行测试时生效，
+   正在运行中的流水线 / 应用实例不受影响。 */
+/* 状态框只用于报错与保存结果提示；日常打开时隐藏 ——
+   输入框 placeholder 已展示当前生效路径，无需再重复一段说明 */
+function appCfgMsg(kind, text){
+  const box=$('appCfgState');
+  box.style.display='';
+  box.className='probe-box'+(kind?(' '+kind):'');
+  box.textContent=text;
+}
+function appCfgHideMsg(){
+  $('appCfgState').style.display='none';
+}
+async function openAppCfg(){
+  $('appMask').classList.add('on');
+  appCfgHideMsg();
+  try{
+    const d=await (await fetch('/api/app-settings')).json();
+    if(d.error){ appCfgMsg('err','读取失败：'+d.error); return; }
+    APP_CFG_DESC=d;   // 📁 按钮据此打开「当前生效路径」（输入框里的是草稿值）
+    // 输入框只回填「本机自定义」值；默认 / config.yaml 的值放 placeholder 展示
+    $('appBinInp').value=d.binary.source==='local'?d.binary.value:'';
+    $('appBinInp').placeholder=d.binary.value||'(空)';
+    $('appLogInp').value=d.session_root.source==='local'?d.session_root.value:'';
+    $('appLogInp').placeholder=d.session_root.value||'(空)';
+    $('wsInp').value=d.workspace.source==='local'?d.workspace.value:'';
+    $('wsInp').placeholder=d.workspace.value||'(空)';
+  }catch(e){ appCfgMsg('err','请求失败：'+e.message); }
+}
+function closeAppCfg(){ $('appMask').classList.remove('on'); }
+/* ================= 设置二级菜单 ================= */
+/* 顶栏只留一个入口，应用 / 模型 / 工作区全部收进二级菜单 */
+$('btnSettings').onclick=e=>{
+  e.stopPropagation();
+  $('settingsMenu').classList.toggle('on');
+};
+document.addEventListener('click',e=>{
+  const m=$('settingsMenu');
+  if(m.classList.contains('on') && !e.target.closest('.settings-wrap')) m.classList.remove('on');
+});
+$('settingsMenu').onclick=e=>{
+  const b=e.target.closest('.sm-item'); if(!b) return;
+  $('settingsMenu').classList.remove('on');
+  const act=b.dataset.act;
+  if(act==='app') openAppCfg();
+  else if(act==='model') openLlm();
+};
+/* 📁 按钮：在访达中打开「当前生效路径」（不是输入框草稿值 ——
+   草稿还没保存；生效值以 APP_CFG_DESC 快照为准，弹窗打开/保存后刷新） */
+let APP_CFG_DESC=null;
+function revealCfgPath(kind){
+  const it=APP_CFG_DESC && APP_CFG_DESC[kind];
+  if(!it || !it.value){ alert('当前无生效路径'); return; }
+  doReveal(it.value);
+}
+$('appCfgClose').onclick=closeAppCfg;
+$('appCfgCancel').onclick=closeAppCfg;
+$('appMask').onclick=e=>{ if(e.target===$('appMask')) closeAppCfg(); };
+$('appCfgSave').onclick=async()=>{
+  const btn=$('appCfgSave'); btn.disabled=true;
+  try{
+    const r=await fetch('/api/app-settings',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({app_binary:$('appBinInp').value.trim(),
+                           session_root:$('appLogInp').value.trim(),
+                           user_workspace:$('wsInp').value.trim()})});
+    const d=await r.json().catch(()=>({ok:false,message:'响应解析失败'}));
+    if(!d.ok){
+      appCfgMsg('err', d.message||'保存失败');
+    }else{
+      $('appBinInp').value=d.binary.source==='local'?d.binary.value:'';
+      $('appBinInp').placeholder=d.binary.value||'(空)';
+      $('appLogInp').value=d.session_root.source==='local'?d.session_root.value:'';
+      $('appLogInp').placeholder=d.session_root.value||'(空)';
+      $('wsInp').value=d.workspace.source==='local'?d.workspace.value:'';
+      $('wsInp').placeholder=d.workspace.value||'(空)';
+      APP_CFG_DESC=d;
+      appCfgMsg('ok','✓ 已保存（下次运行测试生效）');
+    }
+  }catch(e){
+    appCfgMsg('err','请求失败：'+e.message);
+  }
+  btn.disabled=false;
+};
+$('appCfgReset').onclick=async()=>{
+  if(!confirm('清除本机覆盖（应用路径 / 日志目录），恢复默认配置？')) return;
+  try{
+    const r=await fetch('/api/app-settings',{method:'POST',headers:{'Content-Type':'application/json'},
+                                            body:JSON.stringify({reset:true})});
+    const d=await r.json().catch(()=>null);
+    if(d&&d.ok){
+      $('appBinInp').value=''; $('appLogInp').value=''; $('wsInp').value='';
+      $('appBinInp').placeholder=d.binary.value||'(空)';
+      $('appLogInp').placeholder=d.session_root.value||'(空)';
+      $('wsInp').placeholder=d.workspace.value||'(空)';
+      APP_CFG_DESC=d;
+      appCfgMsg('ok','✓ 已恢复默认配置');
+    }
+  }catch(e){}
+};
+/* 任一字段被修改 → 之前的验证结果作废，必须重新测试 */
+['llmBase','llmKey','llmModel','llmPath'].forEach(id=>{
+  $(id).addEventListener('input',()=>{ if(LLM_TESTED) llmInvalidate(); });
+});
+
+/* 会话定位：浏览器禁止 http 页面跳转 file://，所以走后端 open -R 在 Finder 中选中。
+   目标为会话文件夹（含 session.messages.json 等全部产物）。悬停显示完整路径。 */
+function sessionLink(c, label){
+  const txt = label ?? (c.session_id||'—');
+  const p = c.session_log_path;
+  if(!p) return `<span class="mono">${esc(txt)}</span>`;
+  return `<a class="sess-link mono" href="#" data-path="${esc(p)}"
+             title="在 Finder 中显示会话文件夹：${esc(p)}"
+             onclick="revealInFinder(event,this)">${esc(txt)}</a>`;
+}
+
+async function doReveal(p){
+  try{
+    const r = await fetch('/api/reveal',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({path:p})
+    });
+    const j = await r.json();
+    if(!j.ok) alert('无法定位文件：'+(j.message||'未知错误'));
+  }catch(e){
+    alert('请求失败：'+e.message);
+  }
+}
+async function revealInFinder(ev, el){
+  ev.preventDefault();
+  const p = el.getAttribute('data-path');
+  if(!p) return;
+  el.classList.add('busy');
+  await doReveal(p);
+  el.classList.remove('busy');
+}
+
+/* ================= 用例编辑 ================= */
+/* 附件必须真落盘到本机：被测应用的「引用本地文件」是**绝对路径列表**
+   （前端取 Electron File.path），所以先把文件上传到本地服务的附件库，
+   用例只持有路径；运行时由驱动拖拽投递给应用。 */
+let CASES=[{prompt:'',attachments:[]}];
+let UPLOADS=[];     // 附件库清单
+let LIB_FOR=-1;     // 附件库弹窗正在为哪条用例挑附件（-1 = 弹窗未打开）
+
+function fmtSize(n){
+  n=Number(n||0);
+  if(n>=1048576) return (n/1048576).toFixed(1)+'MB';
+  if(n>=1024) return Math.round(n/1024)+'KB';
+  return n+'B';
+}
+async function loadUploads(){
+  try{ UPLOADS=((await (await fetch('/api/uploads')).json()).files)||[]; }
+  catch(e){ UPLOADS=[]; }
+}
+function fileToBase64(f){
+  return new Promise((res,rej)=>{
+    const r=new FileReader();
+    r.onload=()=>res(String(r.result||'').split(',')[1]||'');
+    r.onerror=()=>rej(new Error('读取文件失败'));
+    r.readAsDataURL(f);
+  });
+}
+function pickAttach(i){ const el=$('attFile'+i); if(el) el.click(); }
+async function uploadFiles(files,i){
+  const arr=[...files]; if(!arr.length) return;
+  if(!CASES[i].attachments) CASES[i].attachments=[];
+  const fails=[];
+  for(const f of arr){
+    try{
+      const b64=await fileToBase64(f);
+      const r=await fetch('/api/upload',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({name:f.name,data_base64:b64})});
+      const j=await r.json();
+      if(j.ok) CASES[i].attachments.push({name:j.name,path:j.path,size:j.size});
+      else fails.push(`${f.name}：${j.message||'上传失败'}`);
+    }catch(e){ fails.push(`${f.name}：${e.message}`); }
+  }
+  await loadUploads();
+  renderCases();
+  if(fails.length) alert('部分附件上传失败：\n'+fails.join('\n'));
+}
+/* 附件库弹窗：点击某行即把该文件加进「当前用例」，弹窗保持打开以便连续挑多个。
+   已引用的行标灰且不响应点击 —— 原来只在点击后 alert 一次，等于让用户白点一下。 */
+function openLib(i){
+  LIB_FOR=i;
+  // 每次打开重取一次清单：期间可能刚上传过新文件
+  loadUploads().then(()=>{ renderLib(); $('libMask').classList.add('on'); });
+}
+function closeLib(){ $('libMask').classList.remove('on'); LIB_FOR=-1; }
+function renderLib(){
+  const c=CASES[LIB_FOR];
+  if(!c){ closeLib(); return; }
+  const used=new Set((c.attachments||[]).map(a=>a.path));
+  $('libSub').textContent=`第 ${LIB_FOR+1} 条用例 · 库中 ${UPLOADS.length} 个文件`;
+  $('libList').innerHTML=UPLOADS.length
+    ? UPLOADS.map((f,k)=>{
+        const on=used.has(f.path);
+        return `<div class="lib-row${on?' used':''}" data-k="${k}" title="${esc(f.path)}">`
+          +`<div class="lib-main"><span class="lib-name">${esc(f.name)}</span>`
+          +`<span class="lib-path">${esc(f.path)}</span></div>`
+          +`<div class="lib-meta"><span class="lib-size">${fmtSize(f.size)}</span>`
+          +`<span class="lib-del" data-path="${esc(f.path)}" title="从附件库删除（不可撤销）">删除</span>`
+          +`<span class="lib-add">${on?'已引用':'+ 添加'}</span></div></div>`;
+      }).join('')
+    :'<div class="modal-empty">附件库为空：关闭后点用例行的「📎 附件」上传</div>';
+  $('libCount').textContent=`本用例已引用 ${used.size} 个附件 · 点击行即加入`;
+}
+function addFromLib(i,k){
+  const f=UPLOADS[k]; if(!f||!CASES[i]) return;
+  if(!CASES[i].attachments) CASES[i].attachments=[];
+  if(CASES[i].attachments.some(a=>a.path===f.path)) return;
+  CASES[i].attachments.push({name:f.name,path:f.path,size:f.size});
+  renderCases();   // 用例行的附件标签同步
+  renderLib();     // 弹窗里该行就地转为「已引用」
+}
+/* 删除按钮优先于行点击：已引用行也能删（删除后各用例的引用同步移除） */
+$('libList').onclick=e=>{
+  const del=e.target.closest('.lib-del');
+  if(del){ delUpload(del.dataset.path); return; }
+  const row=e.target.closest('.lib-row');
+  if(!row||row.classList.contains('used')) return;
+  addFromLib(LIB_FOR,+row.dataset.k);
+};
+async function delUpload(p){
+  if(!p) return;
+  if(!confirm('从附件库删除该文件？\n\n文件将从磁盘移除，不可撤销；\n引用它的用例会同步移除该附件。')) return;
+  try{
+    const r=await fetch('/api/upload/delete',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({path:p})});
+    const j=await r.json().catch(()=>({ok:false,message:'响应解析失败'}));
+    if(!j.ok){ alert('删除失败：'+(j.message||'未知错误')); return; }
+    // 库清单与所有用例的引用同步移除，避免留下投递时找不到文件的悬空路径
+    UPLOADS=UPLOADS.filter(f=>f.path!==p);
+    CASES.forEach(c=>{ c.attachments=(c.attachments||[]).filter(a=>a.path!==p); });
+    renderLib(); renderCases();
+  }catch(e){ alert('请求失败：'+e.message); }
+}
+$('libClose').onclick=closeLib;
+$('libDone').onclick=closeLib;
+$('libMask').onclick=e=>{ if(e.target===e.currentTarget) closeLib(); };
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeLib(); });
+function rmAttach(i,j){
+  CASES[i].attachments.splice(j,1);
+  renderCases();
+}
+
+function syncCaseState(){
+  /* 只刷新计数/提示/按钮可用性，不重建输入框（避免打断输入与光标位置） */
+  const filled=CASES.filter(c=>c.prompt.trim()).length;
+  $('caseCount').textContent=`（已填写 ${filled} / ${CASES.length} 条）`;
+  $('btnRun').disabled=RUNNING||filled===0;
+  const hint=$('caseHint');
+  if(filled===0){ hint.className='hint warn'; hint.textContent='请至少填写一条用例的提示词后再运行。'; }
+  else { hint.className='hint'; hint.textContent=`将按顺序执行 ${filled} 条用例，每条用例独立会话。`; }
+}
+
+function renderCases(){
+  const box=$('caseRows');
+  box.innerHTML=CASES.map((c,i)=>{
+    const atts=c.attachments||[];
+    const tags=[
+      c.labels&&c.labels.scene?`<span class="tag t-scene">${esc(c.labels.scene)}</span>`:'',
+      ...((c.labels&&c.labels.targets)||[]).map(t=>`<span class="tag">${esc(t)}</span>`),
+      ...atts.map((a,j)=>`<span class="tag t-att" title="${esc(a.path)}">${esc(a.name)}`
+        +`<b class="tag-x" onclick="rmAttach(${i},${j})" title="移除该附件">×</b></span>`),
+    ].join('');
+    return `
+    <div class="case-row">
+      <div class="no">${String(i+1).padStart(2,'0')}</div>
+      <div class="fields">
+        <input class="prompt" placeholder="输入提示词，例如：请读取你的记忆文件并告诉我记录条数"
+               value="${esc(c.prompt)}" oninput="CASES[${i}].prompt=this.value; syncCaseState()"/>
+        <div class="cl-acts">
+          <button class="cl-att" onclick="pickAttach(${i})" title="上传附件：运行时会被投递给被测应用">📎 附件</button>
+          <button class="cl-att" onclick="openLib(${i})" title="打开附件库，点击即加入本用例">库${UPLOADS.length?'('+UPLOADS.length+')':''}</button>
+          <input type="file" multiple style="display:none" id="attFile${i}"
+                 onchange="uploadFiles(this.files,${i});this.value=''"/>
+        </div>
+        ${tags?`<div class="cl-tags">${tags}</div>`:''}
+      </div>
+      <button class="del" title="删除该用例" onclick="delCase(${i})">×</button>
+    </div>`;
+  }).join('');
+  syncCaseState();
+}
+function addCase(){ CASES.push({prompt:'',attachments:[]}); renderCases();
+  const els=document.querySelectorAll('#caseRows .prompt'); els[els.length-1]?.focus(); }
+function delCase(i){ CASES.splice(i,1); if(!CASES.length) CASES=[{prompt:'',attachments:[]}];
+  closeLib(); renderCases(); }
+$('btnAddCase').onclick=addCase;
+$('btnClearCases').onclick=()=>{ CASES=[{prompt:'',attachments:[]}]; closeLib(); renderCases(); };
+$('btnImport').onclick=openImport;
+
+/* ================= 导入预设弹窗 ================= */
+/* 按标签筛选 → 勾选 → 批量导入。筛选组间 AND、组内 OR；
+   「全选/反选」作用于当前筛选可见项，「全部取消」清空所有勾选。 */
+let PRESET=[], PSEL=new Set();
+const PF={scene:new Set(), target:new Set(), att:'', kw:''};
+let kwTimer=null;
+
+const hasLabels=()=>PRESET.some(c=>c.labels&&(c.labels.scene||(c.labels.targets||[]).length||c.labels.attachment===true));
+
+async function openImport(){
+  try{
+    const j=await (await fetch('/api/preset-cases')).json();
+    PRESET=j.cases||[];
+  }catch(e){ alert('导入失败: '+e.message); return; }
+  // 空列表也允许打开：全删后仍需能通过「新增预设用例」补充
+  PRESET.forEach((c,i)=>c.idx=i);
+  PSEL=new Set(); PF.scene=new Set(); PF.target=new Set(); PF.att=''; PF.kw='';
+  $('impKw').value='';
+  // 场景输入联想：取现有预设出现过的场景
+  $('paddScenes').innerHTML=[...new Set(PRESET.map(c=>c.labels?.scene).filter(Boolean))]
+    .map(s=>`<option value="${esc(s)}"/>`).join('');
+  renderImpFilters(); renderImpList(); syncImpCount();
+  $('importMask').classList.add('on');
+}
+function closeImport(){ $('importMask').classList.remove('on'); }
+
+function renderImpFilters(){
+  const labeled=hasLabels();
+  $('impSceneRow').style.display = labeled?'':'none';
+  $('impTargetRow').style.display = labeled?'':'none';
+  $('impAttRow').style.display = labeled?'':'none';
+  if(!labeled) return;
+  const scenes=[...new Set(PRESET.map(c=>c.labels?.scene).filter(Boolean))].sort();
+  const targets=['ppt','word','html','pdf','excel','network']
+    .filter(t=>PRESET.some(c=>(c.labels?.targets||[]).includes(t)));
+  const mk=(group,val,text)=>`<span class="chip-c" data-g="${group}" data-v="${esc(val)}">${esc(text)}</span>`;
+  $('impSceneChips').innerHTML=scenes.map(s=>mk('scene',s,s)).join('');
+  $('impTargetChips').innerHTML=targets.map(t=>mk('target',t,t)).join('')
+    +mk('target','__none','无文件产物');
+  $('impAttChips').innerHTML=mk('att','yes','是')+mk('att','no','否');
+}
+
+function impFiltered(){
+  const kw=PF.kw.trim().toLowerCase();
+  return PRESET.filter(c=>{
+    if(PF.scene.size&&!PF.scene.has(c.labels?.scene)) return false;
+    const ts=c.labels?.targets||[];
+    if(PF.target.size){
+      if(PF.target.has('__none')){ if(ts.length) return false; }
+      else if(!ts.some(t=>PF.target.has(t))) return false;
+    }
+    if(PF.att==='yes'&&c.labels?.attachment!==true) return false;
+    if(PF.att==='no'&&c.labels?.attachment!==false) return false;
+    if(kw&&!(c.prompt||'').toLowerCase().includes(kw)) return false;
+    return true;
+  });
+}
+
+function renderImpList(){
+  const rows=impFiltered();
+  $('impList').innerHTML=rows.length?rows.map(c=>`
+    <div class="prow${PSEL.has(c.idx)?' sel':''}" data-idx="${c.idx}"
+         title="${esc(c.prompt)}">
+      <input type="checkbox" ${PSEL.has(c.idx)?'checked':''} tabindex="-1"/>
+      <span class="pid">${esc(c.id||'')}</span>
+      <span class="pprompt">${esc(c.prompt)}</span>
+      <span class="ptags">${impTags(c)}</span>
+      ${(c.id?`<span class="pdel" data-id="${esc(c.id)}" title="从 testcases.yaml 删除该预设用例">删除</span>`:'')}
+    </div>`).join('')
+    :'<div class="modal-empty">没有符合筛选条件的用例</div>';
+  $('impSub').textContent=`预设共 ${PRESET.length} 条，当前显示 ${rows.length} 条`;
+}
+
+function impTags(c){
+  const L=c.labels||{}; let out='';
+  if(L.scene) out+=`<span class="tag t-scene">${esc(L.scene)}</span>`;
+  for(const t of (L.targets||[])) out+=`<span class="tag">${esc(t)}</span>`;
+  if(L.attachment===true) out+='<span class="tag t-att">附件</span>';
+  return out;
+}
+
+function syncImpCount(){
+  $('impCount').innerHTML=`已选 <b>${PSEL.size}</b> 条`;
+  $('impOk').disabled=PSEL.size===0;
+}
+
+/* 复用一帧：只同步列表内已渲染行的勾选态，不重建 DOM */
+function syncRows(){
+  $('impList').querySelectorAll('.prow').forEach(el=>{
+    const on=PSEL.has(+el.dataset.idx);
+    el.classList.toggle('sel',on);
+    el.querySelector('input').checked=on;
+  });
+}
+
+function impChipsClick(g,el){
+  const v=el.dataset.v;
+  if(g==='att'){
+    PF.att=(PF.att===v)?'':v;                       // 单选，可再点取消
+  }else{
+    const set=PF[g];
+    set.has(v)?set.delete(v):set.add(v);            // 多选
+  }
+  el.classList.toggle('active');
+  renderImpList(); syncImpCount();
+}
+
+$('impSceneChips').onclick=e=>{ const el=e.target.closest('.chip-c'); if(el) impChipsClick('scene',el); };
+$('impTargetChips').onclick=e=>{ const el=e.target.closest('.chip-c'); if(el) impChipsClick('target',el); };
+$('impAttChips').onclick=e=>{ const el=e.target.closest('.chip-c'); if(el) impChipsClick('att',el); };
+$('impKw').oninput=()=>{ PF.kw=$('impKw').value;
+  clearTimeout(kwTimer); kwTimer=setTimeout(()=>{renderImpList();syncImpCount();},150); };
+
+/* 行点击切换勾选（checkbox 仅作指示，点击统一由行处理，避免双重切换）；
+   「删除」按钮优先拦截：点击它不切换勾选，直接从 testcases.yaml 删除该条。 */
+$('impList').onclick=e=>{
+  const del=e.target.closest('.pdel');
+  if(del){ delPreset(del.dataset.id); return; }
+  const row=e.target.closest('.prow'); if(!row) return;
+  const idx=+row.dataset.idx;
+  PSEL.has(idx)?PSEL.delete(idx):PSEL.add(idx);
+  row.classList.toggle('sel',PSEL.has(idx));
+  row.querySelector('input').checked=PSEL.has(idx);
+  syncImpCount();
+};
+
+/* ================= 预设用例管理（新增 / 删除） ================= */
+/* 直接写服务端 testcases.yaml（头部注释保留、原子替换）；
+   删除/新增成功后本地同步 PRESET 并重排 idx，勾选按 id 保留。 */
+function reindexPreset(keepSelIds){
+  const ids=new Set(keepSelIds||[]);
+  PRESET.forEach((c,i)=>c.idx=i);
+  PSEL=new Set(PRESET.filter(c=>ids.has(c.id)).map(c=>c.idx));
+}
+async function delPreset(id){
+  if(!id) return;
+  if(!confirm(`删除预设用例 ${id}？\n\n该操作直接写入 testcases.yaml，不可撤销。`)) return;
+  const keepSel=new Set(PRESET.filter(c=>PSEL.has(c.idx)).map(c=>c.id));
+  try{
+    const r=await fetch('/api/preset-cases',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({action:'delete',ids:[id]})});
+    const j=await r.json().catch(()=>({ok:false,message:'响应解析失败'}));
+    if(!j.ok){ alert('删除失败：'+(j.message||'未知错误')); return; }
+    PRESET=PRESET.filter(c=>c.id!==id);
+    reindexPreset(keepSel);
+    renderImpFilters(); renderImpList(); syncImpCount();
+  }catch(e){ alert('请求失败：'+e.message); }
+}
+$('paddToggle').onclick=()=>{
+  const b=$('paddBody');
+  b.classList.toggle('show');
+  $('paddToggle').textContent=(b.classList.contains('show')?'▾ 收起新增表单':'+ 新增预设用例');
+};
+$('paddOk').onclick=async()=>{
+  const prompt=$('paddPrompt').value.trim();
+  const msg=$('paddMsg');
+  if(!prompt){ msg.textContent='提示词为必填'; msg.style.color='#b91c1c'; return; }
+  const targets=[...$('paddTargets').querySelectorAll('input:checked')].map(i=>i.value);
+  const scene=$('paddScene').value.trim();
+  const btn=$('paddOk'); btn.disabled=true; msg.textContent='保存中…'; msg.style.color='';
+  try{
+    const r=await fetch('/api/preset-cases',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({action:'add',prompt,
+        labels:{scene,targets,attachment:$('paddAtt').checked}})});
+    const j=await r.json().catch(()=>({ok:false,message:'响应解析失败'}));
+    if(!j.ok){ msg.textContent=j.message||'保存失败'; msg.style.color='#b91c1c'; return; }
+    if(j.case) PRESET.push(j.case);
+    reindexPreset([...PSEL].map(i=>(PRESET[i]||{}).id));
+    renderImpFilters(); renderImpList(); syncImpCount();
+    $('paddPrompt').value=''; $('paddScene').value='';
+    $('paddTargets').querySelectorAll('input').forEach(i=>i.checked=false);
+    $('paddAtt').checked=false;
+    msg.textContent='✓ '+(j.message||'已保存'); msg.style.color='';
+  }catch(e){ msg.textContent='请求失败：'+e.message; msg.style.color='#b91c1c'; }
+  btn.disabled=false;
+};
+
+$('impAll').onclick=()=>{ impFiltered().forEach(c=>PSEL.add(c.idx)); syncRows(); syncImpCount(); };
+$('impInvert').onclick=()=>{
+  impFiltered().forEach(c=>PSEL.has(c.idx)?PSEL.delete(c.idx):PSEL.add(c.idx));
+  syncRows(); syncImpCount();
+};
+$('impNone').onclick=()=>{ PSEL.clear(); syncRows(); syncImpCount(); };
+
+$('impOk').onclick=()=>{
+  const items=PRESET.filter(c=>PSEL.has(c.idx));
+  if(!items.length){ alert('请先勾选要导入的用例'); return; }
+  // 空行直接替换，已有内容则追加
+  if(CASES.length===1&&!CASES[0].prompt.trim()) CASES=[];
+  /* labels 必须一起带上：评估要靠它判定场景与「是否要求交付文件」。
+     旧实现只带 prompt，标签在运行期丢失，才催生了「按同名 id 从预设借标签」
+     的串台缺陷（同 id 不同问题 → 凭空多出文件要求 → 任务完成率被误判 0 分）。 */
+  for(const it of items) CASES.push({prompt:it.prompt||'', labels:it.labels||{}, attachments:[]});
+  renderCases();
+  closeImport();
+};
+$('impCancel').onclick=closeImport;
+$('impClose').onclick=closeImport;
+$('importMask').onclick=e=>{ if(e.target===e.currentTarget) closeImport(); };
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeImport(); });
+
+/* ================= 运行控制 ================= */
+async function startRun(body){
+  if(RUNNING) return;
+  const r=await fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const j=await r.json();
+  if(!j.ok){ alert(j.message); return; }
+  $('console').classList.add('on');
+  $('console').textContent='';
+  setRunning(true);
+}
+$('btnRun').onclick=()=>{
+  const items=CASES.filter(c=>c.prompt.trim())
+    .map((c,i)=>({id:'CASE-'+String(i+1).padStart(3,'0'),prompt:c.prompt.trim(),
+                  labels:c.labels||{},
+                  // 附件只传本机绝对路径：运行时由驱动拖拽投递给被测应用
+                  attachments:(c.attachments||[]).map(a=>a.path)}));
+  if(!items.length){ alert('请至少填写一条用例的提示词'); return; }
+  /* 复现次数/签名上限 暂时下线：不传参，后端默认关闭复现验证 */
+  startRun({case_items:items,
+            max_inflight:+$('optInflight').value});
+};
+
+/* 终止测试：杀掉测试进程；本轮不归档、无报告。常驻应用不受影响 */
+$('btnStop').onclick=async()=>{
+  if(!confirm('确定终止当前测试？\n\n测试进程将被停止，本轮不产出报告；\n已完成的用例结果也会一并丢弃。\n被测应用不受影响，继续常驻。')) return;
+  $('btnStop').disabled=true;
+  try{
+    const r=await fetch('/api/run/stop',{method:'POST'});
+    const j=await r.json();
+    if(!j.ok) alert('终止失败：'+(j.message||'未知错误'));
+  }catch(e){ alert('请求失败：'+e.message); }
+  $('btnStop').disabled=false;
+};
+
+function setRunning(v){
+  RUNNING=v;
+  $('btnRun').textContent=v?'⟳ 测试运行中…':'▶ 运行测试';
+  $('btnStop').style.display=v?'':'none';   // 运行中才可终止
+  // 状态统一由 syncCaseState 决定，避免绕过 filled===0 的校验把按钮点亮
+  syncCaseState();
+  syncEnvUI();                       // 测试期间关闭实例按钮需置灰
+  if(v&&!pollTimer) pollTimer=setInterval(pollStatus,1200);
+  if(!v&&pollTimer){clearInterval(pollTimer);pollTimer=null;}
+}
+
+async function pollStatus(){
+  const j=await (await fetch('/api/run/status')).json();
+  renderStatus(j);
+  if(!j.running){
+    setRunning(false);
+    await loadRounds();
+    if(j.archived && j.run_id){ openRound(j.run_id); }
+  }
+}
+
+function renderStatus(j){
+  const b=$('statusBadge');
+  if(j.running){ b.className='badge b-run'; b.textContent='运行中 · '+j.elapsed_s+'s'; }
+  // 正常结束：进程退出码为 0（不依赖 archived —— 它与落盘之间有竞态窗口）
+  else if(j.finished_ok||(j.exit_code===0&&j.archived)){
+    b.className='badge b-ok'; b.textContent='完成';
+  }
+  // 手动终止：本轮不归档，无报告
+  else if(j.stopped){
+    b.className='badge b-err'; b.textContent='已终止（未产出报告）';
+  }
+  // 异常结束：非 0 退出码，需要看控制台排查
+  else if(j.exit_code!=null){ b.className='badge b-err'; b.textContent='异常退出（code '+j.exit_code+'）'; }
+  else { b.className='badge b-idle'; b.textContent='空闲'; }
+  if(j.lines&&j.lines.length){
+    const c=$('console');
+    c.innerHTML=j.lines.map(l=>{const i=l.indexOf('  ');
+      return '<span class="ln-time">'+esc(l.slice(0,i))+'</span> '+esc(l.slice(i+2));}).join('\n');
+    c.scrollTop=c.scrollHeight;
+  }
+}
+
+/* ================= 轮次 ================= */
+let ROUND_DIR='';   // 轮次归档根目录（服务端下发），轮次名链接据此打开访达文件夹
+async function loadRounds(){
+  const j=await (await fetch('/api/rounds')).json();
+  ROUND_DIR=(j.dir||'').replace(/\/+$/,'');
+  const box=$('roundList');
+  if(!j.rounds.length){ box.innerHTML='<div class="round-empty">暂无轮次</div>'; return; }
+  box.innerHTML=j.rounds.map(r=>{
+    const s=r.summary||{};
+    const okc=s.passed??0, all=s.cases??0, fnd=s.findings??0;
+    const folder=ROUND_DIR?ROUND_DIR+'/'+r.run_id:'';
+    return `<div class="round-item ${currentRound===r.run_id?'active':''}" onclick="openRound('${r.run_id}')">
+      <div class="rid">${folder
+        ?`<a class="rid-link" href="#" data-path="${esc(folder)}"
+            title="在访达中打开该轮次文件夹：${esc(folder)}"
+            onclick="event.stopPropagation();revealInFinder(event,this)">${esc(r.run_id)}</a>`
+        :esc(r.run_id)}</div>
+      <div class="rmeta">
+        <span>${esc(r.finished_at)}</span>
+        <span>用例 ${okc}/${all} 通过</span>
+        <span>${fnd?fnd+' 个问题':'无问题'}</span>
+      </div>
+      ${promptPreview(r)}
+      <button class="round-del" title="删除该轮次归档"
+              onclick="delRound(event,'${r.run_id}')">×</button>
+    </div>`;
+  }).join('');
+}
+
+/* 轮次列表的提示词摘要：只显示前 PREVIEW_CHARS 个字符，超出省略。
+   多条用例时显示「首条 +N」，悬停可看全部提示词。 */
+const PREVIEW_CHARS=42;
+
+function promptPreview(r){
+  const cases=(r.cases||[]).filter(c=>(c.prompt||'').trim());
+  if(!cases.length) return '';
+  const cut=t=>{
+    const t2=t.trim().replace(/\s+/g,' ');
+    return t2.length>PREVIEW_CHARS ? t2.slice(0,PREVIEW_CHARS)+'…' : t2;
+  };
+  const first=cut(cases[0].prompt);
+  const more=cases.length>1 ? `<span class="rp-more">+${cases.length-1}</span>` : '';
+  const full=cases.map((c,i)=>`${i+1}. ${(c.prompt||'').trim()}`).join('\n');
+  return `<div class="rprompt" title="${esc(full)}">${esc(first)}${more}</div>`;
+}
+
+async function delRound(ev, rid){
+  ev.stopPropagation();          // 别触发外层的 openRound
+  if(!confirm(`确定删除轮次 ${rid} ？\n\n该轮次的归档数据（用例结果、报告、控制台日志）将被永久删除，无法恢复。`)) return;
+  try{
+    const r = await fetch('/api/rounds/'+encodeURIComponent(rid), {method:'DELETE'});
+    const j = await r.json();
+    if(!j.ok){ alert('删除失败：'+(j.message||'未知错误')); return; }
+    if(currentRound===rid){        // 删的是当前查看的轮次，清空详情区
+      currentRound=null;
+      $('detailPane').innerHTML='<div class="card"><div class="empty">该轮次已删除，请选择其他轮次</div></div>';
+    }
+    await loadRounds();
+  }catch(e){
+    alert('请求失败：'+e.message);
+  }
+}
+
+async function openRound(rid){
+  currentRound=rid; currentCase=0;
+  document.querySelectorAll('.round-item').forEach(el=>el.classList.remove('active'));
+  event&&event.target&&event.target.closest&&event.target.closest('.round-item')?.classList.add('active');
+  const j=await (await fetch('/api/rounds/'+rid)).json();
+  if(j.error){ alert('轮次数据缺失: '+rid); return; }
+  renderRound(j);
+}
+
+/* ================= 详情渲染 ================= */
+function kpi(label,value,foot,cls){ return `<div class="kpi"><div class="label">${label}</div>
+  <div class="value ${cls||''}">${value}</div><div class="foot">${foot||''}</div></div>`; }
+
+function renderRound(data){
+  const s=data.summary||{}, d=data.detail||{}, m=d.metrics||{}, sm=m.summary||s;
+  const rp=m.repro_summary||{};
+  let html='';
+
+  // 本轮用例概览：只列出用例本身，不做跨用例聚合画像
+  const cases=d.cases||[];
+  html+='<div class="kpis">'
+    +kpi('本轮用例',cases.length,`通过 ${sm.passed??0} · 断言失败 ${sm.failed??0} · UI失败 ${sm.ui_failed??0}`,'v-acc')
+    +kpi('问题发现',sm.findings??0,`P0 ${sm.p0??0} · P1 ${sm.p1??0}`,(sm.findings??0)>0?'v-bad':'v-ok')
+    +'</div>';
+
+  if(rp.verified){
+    html+=`<div class="card" style="margin-bottom:14px"><h3 class="sec">复现率验证</h3>
+      <div style="display:flex;gap:22px;flex-wrap:wrap;font-size:12.5px;color:var(--tx2)">
+        <span>已验证 <b style="color:var(--tx)">${rp.verified}</b> 个签名</span>
+        <span>必现 <b style="color:var(--p0)">${rp.stable}</b></span>
+        <span>高概率 <b style="color:var(--p1)">${rp.likely}</b></span>
+        <span>偶发 <b>${rp.flaky}</b></span>
+        <span>平均复现率 <b style="color:var(--accent)">${fmtPct(rp.avg_rate)}</b></span>
+      </div></div>`;
+  }
+
+  // Tabs
+  html+=`<div class="tabs">
+    <button class="tab ${currentTab==='trace'?'active':''}" onclick="setTab('trace')">用例详情</button>
+    <button class="tab ${currentTab==='obj'?'active':''}" onclick="setTab('obj')">客观信息</button>
+    <button class="tab ${currentTab==='bugs'?'active':''}" onclick="setTab('bugs')">问题发现</button>
+    <button class="tab ${currentTab==='eval'?'active':''}" onclick="setTab('eval')">质量评估</button>
+  </div><div class="card" id="tabBody"></div>`;
+
+  $('detailPane').innerHTML=html;
+  setTab(currentTab);
+}
+
+function setTab(t){
+  currentTab=t;
+  document.querySelectorAll('.tab').forEach(b=>b.classList.remove('active'));
+  event&&event.target&&event.target.classList.add('active');
+  const j=lastRoundData; if(!j) return;
+  const d=j.detail||{}, m=d.metrics||{};
+  const body=$('tabBody');
+  if(t==='trace') body.innerHTML=traceTab(d);
+  else if(t==='obj') body.innerHTML=objTab(m,d);
+  else if(t==='eval') body.innerHTML=evalTab();
+  else body.innerHTML=bugsTab(m,d);
+}
+
+/* ---- Tab: 客观信息（跟随当前选中的用例） ---- */
+function objTab(m,d){
+  const cases=d.cases||[];
+  if(!cases.length) return '<div class="empty">本轮无用例数据</div>';
+  currentCase=Math.min(currentCase,cases.length-1);
+  const c=cases[currentCase];
+  const o=c.objective||{}, tm=o.timing||{}, tk=o.volume||{}, rq=o.requests||{}, stt=o.status||{};
+  const stg=tm.stage_times||{};
+
+  let h='<div class="case-chips">'+cases.map((x,i)=>
+      `<span class="chip-c ${i===currentCase?'active':''}" onclick="pickCase(${i})">${esc(x.case_id)} ${esc(x.name)} ${x.status==='PASS'?'✓':x.status==='FAIL'?'✗':'⚠'}</span>`).join('')+'</div>';
+
+  h+=`<div style="font-size:12.5px;margin-bottom:12px"><b>提示词：</b>${esc(c.prompt)}</div>`;
+
+  h+='<h3 class="sec" style="margin-top:0">该用例耗时</h3><div class="tbl-card"><table>'
+    +`<tr><td>平台实测（发送 → 落盘稳定）</td><td style="text-align:right"><b>${c.elapsed_s??'—'}s</b></td></tr>`
+    +`<tr><td>首响延迟（提问 → 模型响应）</td><td style="text-align:right"><b>${tm.first_response_s??'—'}${tm.first_response_s!=null?'s':''}</b></td></tr>`
+    +`<tr><td>生成时长</td><td style="text-align:right"><b>${tm.generation_s??'—'}${tm.generation_s!=null?'s':''}</b></td></tr>`
+    +`<tr><td>会话时长</td><td style="text-align:right"><b>${tm.session_s??'—'}${tm.session_s!=null?'s':''}</b></td></tr>`
+    +'</table></div>'
+    +`<div class="note" style="margin:10px 0 16px">${esc(tm.note||'')}</div>`;
+
+  h+='<h3 class="sec">该用例调用与状态</h3><div class="tbl-card"><table>'
+    +`<tr><td>工具调用</td><td style="text-align:right"><b>${rq.tool_calls??0}</b> 次</td></tr>`
+    +`<tr><td>思考步数</td><td style="text-align:right"><b>${rq.thinking_steps??0}</b> 步</td></tr>`
+    +`<tr><td>对话轮次</td><td style="text-align:right"><b>${rq.turns??0}</b> 轮</td></tr>`
+    +`<tr><td>调用成功 / 失败 / 截断</td><td style="text-align:right"><b>${stt.tool_ok??0} / ${stt.tool_fail??0} / ${stt.tool_truncated??0}</b></td></tr>`
+    +`<tr><td>调用链路一致性</td><td style="text-align:right"><span class="badge ${stt.chain_consistent===false?'b-fail':'b-pass'}">${stt.chain_consistent===false?'存在不一致':'一致'}</span></td></tr>`
+    +`<tr><td>会话收尾</td><td style="text-align:right"><span class="badge ${stt.session_closed?'b-pass':'b-fail'}">${esc(stt.closed_desc||'—')}</span></td></tr>`
+    +'</table></div>';
+
+  h+='<h3 class="sec" style="margin-top:16px">该用例 token 用量（估算口径）</h3><div class="tbl-card"><table>'
+    +`<tr><td>输入（提示词 + 工具结果回灌）</td><td style="text-align:right"><b>${tk.input_tokens_est??0}</b></td></tr>`
+    +`<tr><td>输出（思考 + 答复 + 调用参数）</td><td style="text-align:right"><b>${tk.output_tokens_est??0}</b></td></tr>`
+    +`<tr><td><b>合计</b></td><td style="text-align:right"><b style="color:var(--accent)">${tk.total_tokens_est??0}</b></td></tr>`
+    +'</table></div>'
+    +`<div class="note warn" style="margin-top:10px">${esc(tk.note||'')}</div>`;
+
+  // 该用例实际用到的工具（不跨用例聚合）
+  const tools=c.tools||[];
+  h+='<h3 class="sec" style="margin-top:16px">该用例调用到的工具</h3><div class="tbl-card"><table><tr><th>工具</th><th>调用</th><th>失败</th><th>截断</th></tr>';
+  for(const t of tools){
+    h+=`<tr><td class="mono">${esc(t.name)}</td><td>${t.calls}</td>`
+      +`<td>${t.fail?`<span class="badge b-p0">${t.fail}</span>`:'—'}</td>`
+      +`<td>${t.truncated?`<span class="badge b-p1">${t.truncated}</span>`:'—'}</td></tr>`;
+  }
+  if(!tools.length) h+='<tr><td colspan="4" class="empty">该用例未调用工具</td></tr>';
+  h+='</table></div>';
+
+  const sk=c.skills||[];
+  if(sk.length){
+    h+='<h3 class="sec" style="margin-top:16px">该用例调用的 Skill</h3><div class="tbl-card"><table><tr><th>Skill</th><th>读取文件</th></tr>';
+    for(const x of sk){
+      h+=`<tr><td><span class="badge" style="background:#ede9fe;color:#6d28d9">${esc(x.name)}</span></td>`
+        +`<td class="mono">${esc((x.files||[]).join(', '))||'—'}</td></tr>`;
+    }
+    h+='</table></div>';
+  }
+  return h;
+}
+
+/* ---- Tab: 轨迹 ---- */
+function traceTab(d){
+  const cases=d.cases||[];
+  if(!cases.length) return '<div class="empty">本轮无用例数据</div>';
+  currentCase=Math.min(currentCase,cases.length-1);
+  let h='<div class="case-chips">'+cases.map((c,i)=>
+    `<span class="chip-c ${i===currentCase?'active':''}" onclick="pickCase(${i})">${esc(c.case_id)} ${esc(c.name)} ${c.status==='PASS'?'✓':c.status==='FAIL'?'✗':'⚠'}</span>`).join('')+'</div>';
+  h+=caseTimeline(cases[currentCase]);
+  return h;
+}
+function pickCase(i){
+  currentCase=i;
+  const j=lastRoundData||{}, d=j.detail||{}, m=d.metrics||{};
+  if(currentTab==='trace') $('tabBody').innerHTML=traceTab(d);
+  else if(currentTab==='obj') $('tabBody').innerHTML=objTab(m,d);
+  else if(currentTab==='eval') $('tabBody').innerHTML=evalTab();
+  else $('tabBody').innerHTML=bugsTab(m,d);
+}
+
+function caseTimeline(c){
+  let h=`<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+    <span style="font-weight:700">${esc(c.name)}</span>
+    <span class="mono">${esc(c.case_id)}</span>
+    <span class="badge ${c.status==='PASS'?'b-ok':c.status==='FAIL'?'b-fail':'b-uifail'}">${c.status==='PASS'?'通过':c.status==='FAIL'?'断言失败':'UI 失败'}</span>
+  </div>
+  <div class="case-meta">
+    <span>会话 ${sessionLink(c)}</span>
+    <span>耗时 ${c.elapsed_s}s</span>
+    <span>工具调用 <b>${c.tool_call_count??0}</b></span>
+    <span>思考步 <b>${c.thinking_count??0}</b></span>
+    <span>答复 ${c.answer_chars??0} 字</span>
+  </div>
+  <div style="font-size:12.5px;margin-bottom:6px"><b>提示词：</b>${esc(c.prompt)}</div>`;
+  if((c.attachments||[]).length){
+    // 附件投递结果：attach_note 由驱动回填（以「引用计数是否真的增加」判定）
+    h+=`<div style="font-size:12px;color:var(--tx2);margin-bottom:8px"><b>附件：</b>`
+      +c.attachments.map(a=>`<span class="badge" style="background:#eff6ff;color:#1d4ed8" title="${esc(a)}">`
+        +`${esc(String(a).split('/').pop())}</span>`).join(' ')
+      +(c.attach_note?`<span style="color:var(--tx3);margin-left:6px">${esc(c.attach_note)}</span>`:'')+'</div>';
+  }
+  if(c.ui_error) h+=`<div style="color:var(--p0);font-size:12.5px;margin-bottom:10px">UI 异常：${esc(c.ui_error)}</div>`;
+  if(c.waited_limit) h+=`<div style="color:var(--tx2);font-size:12.5px;margin-bottom:10px">· ${esc(c.wait_note||'已达等待上限')}</div>`;
+  if(c.answer_excerpt) h+=`<div class="answer">${esc(c.answer_excerpt)}</div>`;
+  if(c.skills&&c.skills.length){
+    h+=`<div style="font-size:12px;color:var(--tx2);margin-bottom:12px">调用 Skill：
+      ${c.skills.map(s=>`<span class="badge" style="background:#ede9fe;color:#6d28d9">${esc(s.name)}</span>`).join(' ')}</div>`;
+  }
+  h+='<div class="tl">';
+  for(const st of (c.steps||[])){
+    if(st.type==='thinking'){
+      const ctn=st.content||'';
+      // 标题行取首行做概览，内容区展示全文（可滚动）
+      const head=ctn.replace(/\s+/g,' ').slice(0,60);
+      h+=`<div class="step thinking"><span class="dot"></span>
+        <div class="step-head" onclick="this.parentNode.classList.toggle('open')">
+          <span class="t-type">思考</span>
+          <span class="t-name">${esc(head)}${ctn.length>60?'…':''}</span>
+          <span class="mono">${st.chars} 字</span>
+        </div>
+        <div class="step-body"><div class="pre pre-full">${esc(ctn)||'(空)'}</div></div>
+      </div>`;
+    }else if(st.type==='auto_confirm'){
+      // 平台自动确认：位置按消息段近似（会话日志没有步骤级时间戳），带「近似」角标与悬停说明
+      const firstLine=(st.text||'').split('\n')[0];
+      const tip=`触发方式：${st.mode||'未知'}${st.q?'（题 '+st.q+'）':''}\n`
+        +`归属来源：${st.attribution==='session'?'按会话归属（驱动点击时记录）':'时间窗回退（事件无会话标识，旧数据）'}\n`
+        +`位置精度：消息级近似 —— 会话日志只记录消息时间戳，步骤级时间未记录\n`
+        +(st.anchor?`锚定消息时间：${st.anchor}`:'无时间锚，已置于时间线末尾');
+      h+=`<div class="step confirm"><span class="dot"></span>
+        <div class="step-head" onclick="this.parentNode.classList.toggle('open')">
+          <span class="t-type">确认</span>
+          <span class="t-name">${esc(st.label||'自动确认')}</span>
+          ${st.time?`<span class="mono">${esc(st.time)}</span>`:''}
+          ${st.approximate?`<span class="badge b-approx" title="${esc(tip)}">近似</span>`:''}
+          <span class="t-name" style="font-weight:400;color:var(--tx2)">${esc(firstLine).slice(0,40)}${(st.text||'').length>40?'…':''}</span>
+        </div>
+        <div class="step-body">
+          <div class="kv"><b>触发方式</b><span class="pre">${esc(st.mode||'')}</span></div>
+          <div class="kv"><b>按钮文本</b><span class="pre pre-full">${esc(st.text)||'(空)'}</span></div>
+          ${st.q?`<div class="kv"><b>题号</b><span class="pre">${esc(st.q)}</span></div>`:''}
+          <div class="kv"><b>归属</b><span class="pre pre-full">${st.attribution==='session'?'按会话归属（驱动在点击那一刻记录会话目录）':'时间窗回退（事件无会话标识，旧数据或非驱动来源）'}</span></div>
+          <div class="kv"><b>位置精度</b><span class="pre pre-full">消息级近似 —— 会话日志只记录消息时间戳，步骤级时间未记录${st.anchor?`；本条锚定消息时间 ${esc(st.anchor)}`:'；本条无时间锚，已置于时间线末尾'}</span></div>
+        </div>
+      </div>`;
+    }else{
+      const cls=st.skill_name?'skill':(st.status==='fail'?'fail':(st.status==='truncated'||st.status==='empty')?'truncated':'');
+      const stTxt=st.status==='fail'?'<span class="badge b-p0">失败</span>'
+                 :st.status==='truncated'?'<span class="badge b-p1">截断</span>'
+                 :st.status==='empty'?'<span class="badge b-p1">空返回</span>'
+                 :'<span class="badge b-ok">成功</span>';
+      h+=`<div class="step tool ${cls}"><span class="dot"></span>
+        <div class="step-head" onclick="this.parentNode.classList.toggle('open')">
+          <span class="t-type">工具</span>
+          <span class="t-name mono" style="color:var(--accent)">${esc(st.name)}</span>
+          ${stTxt}
+          ${st.skill_name?`<span class="badge" style="background:#ede9fe;color:#6d28d9">skill: ${esc(st.skill_name)}</span>`:''}
+          <span class="mono" title="正文长度（取自字段 ${esc(st.body_from||'raw')}）；括号内为含 JSON 外壳的总长">结果 ${st.result_len} 字${st.raw_len&&st.raw_len!==st.result_len?`（外壳 ${st.raw_len}）`:''}</span>
+          ${(st.issues&&st.issues.length)?`<span class="mono" style="color:var(--p0)">${st.issues.join(',')}</span>`:''}
+        </div>
+        <div class="step-body">
+          <div class="kv"><b>参数</b><span class="pre pre-full">${esc(st.args_summary)}</span></div>
+          <div class="kv"><b>结果</b><span class="pre pre-full">${esc(st.result)||'(空)'}</span></div>
+          ${st.skill_files&&st.skill_files.length?`<div class="kv"><b>读取</b><span class="pre pre-full">${esc(st.skill_files.join(', '))}</span></div>`:''}
+        </div>
+      </div>`;
+    }
+  }
+  return h+'</div>';
+}
+
+/* ---- Tab: 问题发现（仅当前用例） ---- */
+function bugsTab(m,d){
+  const cases=d.cases||[];
+  if(!cases.length) return '<div class="empty">本轮无用例数据</div>';
+  currentCase=Math.min(currentCase,cases.length-1);
+  const c=cases[currentCase];
+  const rows=c.findings||[];
+
+  let h='<div class="case-chips">'+cases.map((x,i)=>
+      `<span class="chip-c ${i===currentCase?'active':''}" onclick="pickCase(${i})">${esc(x.case_id)} ${esc(x.name)} ${x.status==='PASS'?'✓':x.status==='FAIL'?'✗':'⚠'}</span>`).join('')+'</div>'
+    +`<div style="font-size:12.5px;margin-bottom:12px"><b>提示词：</b>${esc(c.prompt)}</div>`;
+
+  if(!rows.length){
+    return h+`<div class="none-banner">
+      <div class="big">✓ 该用例未发现问题</div>
+      <div class="sm">已按全部硬性缺陷规则检查该用例的调用链路（工具调用失败、死循环、重复调用、
+      内容截断、必填参数为空、链路一致性、会话收尾等），未命中任何规则。</div></div>`;
+  }
+
+  for(const f of rows){
+    h+=`<div class="finding">
+      <div class="f-hd">
+        <span class="badge b-${(f.severity||'p2').toLowerCase()}">${esc(f.severity)}</span>
+        <b style="font-size:12.5px">${esc(f.name)}</b>
+        <span class="mono">${esc(f.rule)}</span>
+        ${f.tool?`<span class="mono">${esc(f.tool)}</span>`:''}
+        ${f.step_index!=null?`<span class="mono" style="color:var(--tx3)">步骤 #${f.step_index}</span>`:''}
+      </div>
+      <div class="f-detail"><b>具体表现：</b>${esc(f.detail)}</div>
+      ${f.impact?`<div class="f-impact"><b>影响：</b>${esc(f.impact)}</div>`:''}
+      ${f.evidence?`<div class="evi">${esc(f.evidence)}</div>`:''}
+      ${f.repro?reproHtml(f.repro):''}
+    </div>`;
+  }
+  return h;
+}
+function reproHtml(r){
+  let h=`<div class="repro"><b>稳定复现方法</b>
+    <div style="margin-top:5px" class="pre">${esc(r.prompt)}</div>
+    <div style="margin-top:5px"><b>验证标准：</b>${esc(r.verify_desc)}</div>
+    <div><b>预期：</b>${esc(r.expected)}</div>
+    <div><b>实际：</b>${esc(r.actual)}</div>`;
+  if(r.attempts){
+    h+=`<div style="margin-top:5px"><b>自动化验证：</b>${r.hits}/${r.attempts} =
+      <b style="color:var(--accent)">${fmtPct(r.rate)}</b> ${esc(r.stability||'')}</div>`;
+  }
+  return h+'</div>';
+}
+
+/* ================= 质量评估 ================= */
+/* 结果表的列名与构成由后端下发（core/eval_rubric.EVAL_COLUMNS），
+   前端不再自维护分组名，避免两处口径漂移。 */
+const EV_BASIS={objective:'客观',llm:'模型',hybrid:'混合'};
+/* 指标元信息（判定来源/锚点原文/判定方式），由后端随产物下发（core/eval_rubric.rubric_meta）。
+   hover 说明刻意用原生 title：不占版面、不打扰，但能随时核对「这一项到底按什么标准判」。 */
+let EV_RUBRIC={};
+let EVAL_STATE=null, EVAL_TIMER=null;
+
+function evPct(score,scale){
+  if(score==null) return 0;
+  return scale==='1-5' ? Math.round((score-1)/4*100) : Math.round(score/5*100);
+}
+/* ---------- 评估结果表（表头固定三类） ----------
+   每个用例一张表：行=指标，单元格=本用例分值，表尾=本用例各维度均分。
+   列定义由后端下发（core/eval_rubric.EVAL_COLUMNS）；
+   旧产物缺这些字段时，回落到这里的默认三列。 */
+const EV_COLS_FALLBACK=[
+  {id:'outcome_teaching',label:'结果质量 / 教学专业质量',
+   groups:['result_quality','teaching_quality']},
+  {id:'safety_reliability',label:'安全与可靠',groups:['safety_reliability']},
+  {id:'agent_capability',label:'系统与 Agent 能力',groups:['agent_capability']},
+];
+function evCols(sm){
+  const cs=sm.columns;
+  return (Array.isArray(cs)&&cs.length)?cs:EV_COLS_FALLBACK;
+}
+/* 维度单元格 hover（评分标准）：回答「这一项是什么、按什么档位判、谁给的分」。
+   只放标准与口径，不放本次结果 —— 结果理由在 dimWhyTip（分数单元格 hover）里。
+   分开的理由：混在一起时，最该先看到的「为什么扣分」会被整段锚点顶到后面。 */
+function dimStdTip(s){
+  const r=EV_RUBRIC[s.key]||{};
+  const anchors=r.anchors||{};
+  // 新口径（有 nature）basis 是「分值来源」；历史产物的 basis 是「维度性质」，
+  // 必须分别解释 —— 用新语义去解释旧数据会误导（把本地公式分说成硬规则覆盖）。
+  const isNew=(s.nature!==undefined);
+  const src=isNew
+    ? '分值来源：'+((s.basis==='objective')?'硬规则（安全红线覆盖模型判定）'
+                   :(s.score==null?'未评分':'模型判定'))
+    : '判定来源：'+((EV_BASIS[s.basis]||s.basis||'')+'（历史口径）');
+  const lines=[(r.label||s.label||'')+'（'+src+'）'];
+  // 锚点由后端随产物下发（rubric_meta）；旧产物没有该字段 → 不显示空的「档位」标题
+  const ks=Object.keys(anchors).sort((a,b)=>Number(b)-Number(a));
+  if(ks.length){
+    lines.push('评分标准（档位锚点）：');
+    ks.forEach(k=>lines.push('  '+anchors[k]));
+  }
+  if(r.how) lines.push('判定方式：'+r.how);
+  if(r.always)
+    lines.push('适用性：跨场景恒评（与教学 / 非教学无关；无可视产物时由本地判不适用）');
+  return lines.join('\n');
+}
+/* 分数单元格 hover（判定理由）：回答「这次为什么是这个分」。
+   汇总行会逐用例列出未满分原因；逐例表只有该用例自己的理由。 */
+function dimWhyTip(s){
+  const cut=(t,n)=>{t=String(t??'');return t.length>n?t.slice(0,n)+'…':t;};
+  const lines=[];
+  // 满分档一律为 5（1-5 / 0-3-5 / 5-0 / ratio 都是 5 分制），未满分即 score<5。
+  const why=String(s.reason||'').trim();
+  if(s.score!=null&&why)
+    lines.push((Number(s.score)>=5?'判定理由：':'未满分原因：')+cut(why,300));
+  if(s.hint!=null&&s.score!=null&&Math.abs(s.score-s.hint)>=0.05)
+    lines.push(`本地参考值 ${s.hint}（同口径确定性算法算出，仅作对比，最终以模型判定为准）`);
+  if(s.na_reason) lines.push('本轮未评分原因：'+s.na_reason);
+  if(!lines.length) lines.push('本次无可展示的判定理由');
+  return lines.join('\n');
+}
+/* 产物清单（美观度行「查看产物」用）：优先 cases[].artifacts（带 abs_path），
+   回落 objective_facts.产物.产物清单（带「绝对路径」）。前端**不猜路径** ——
+   后端没解析出绝对路径就置灰并说明，让「找不到」可见而不是静默消失。 */
+function evProducts(c){
+  if(!c) return null;
+  const items=[];
+  for(const a of (c.artifacts||[]))
+    items.push({type:a.kind||'', path:a.path||'', abs:a.abs_path||''});
+  if(!items.length)
+    for(const it of ((((c.objective_facts||{}).产物)||{}).产物清单||[]))
+      items.push({type:it['类型']||'', path:it['文件']||'', abs:it['绝对路径']||''});
+  if(!items.length) return null;
+  const nameOf=x=>String(x.path||x.abs||'').split('/').pop()||'(未命名)';
+  return {items, names:items.map(nameOf), ok:items.filter(x=>x.abs)};
+}
+/* 「查看产物」按钮：复用已有 revealInFinder → POST /api/reveal（后端 open -R）。
+   多产物时按钮标注数量、悬停列出全部文件名，点击定位第一个可解析到的产物。 */
+function evArtBtn(p){
+  if(!p) return '';
+  const tip='产物：'+p.names.join('、')
+    +(p.ok.length?`\n点击在 Finder 中显示：${p.ok[0].abs}`
+                 :'\n本机未找到产物文件（按工作区解析不到绝对路径）');
+  if(!p.ok.length)
+    return `<span class="evt-art disabled" title="${esc(tip)}">查看产物</span>`;
+  return `<a class="evt-art" href="#" data-path="${esc(p.ok[0].abs)}" title="${esc(tip)}"`
+    +` onclick="revealInFinder(event,this)">查看产物${p.ok.length>1?' ('+p.ok.length+')':''}</a>`;
+}
+/* 单元格渲染（仅供 evCaseTable 调用）。只展示本用例自己的分值：
+   跨用例均分已删除（不把「别人的分数」混进单用例视角），维度均分见表尾行。 */
+function evCell(a, c){
+  if(!a) return '<td class="evt-empty"></td>';
+  // 新口径（有 nature）：默认「模型判定」不打标，避免整表同一标签，只标例外「硬规则」。
+  // 历史产物：按其当时的判定来源标「客观 / 模型 / 混合」，不能用新语义解释旧数据。
+  const isNew=(a.nature!==undefined);
+  const tag=isNew
+    ? (a.basis==='objective'
+        ? `<span class="src-tag objective" title="确定性硬规则覆盖模型判定（安全红线）">硬规则</span>`
+        : '')
+    : (EV_BASIS[a.basis]?`<span class="src-tag ${esc(a.basis)}">${esc(EV_BASIS[a.basis])}</span>`:'');
+  // hover 分两侧：指标名 = 评分标准（dimStdTip），分数 = 判定理由（dimWhyTip）。
+  const name=`<span class="evt-name" title="${esc(dimStdTip(a))}">${esc(a.label)}${tag}</span>`;
+  const why=esc(dimWhyTip(a));
+  const drift=(a.score!=null&&a.hint!=null&&Math.abs(a.score-a.hint)>=0.05)
+    ? `<span class="evt-n" title="本地参考值 ${a.hint}：同口径确定性算法算出的均值，仅供对比">参考 ${a.hint}</span>`:'';
+  const cv=a.score==null
+    ? `<span class="evt-na" title="${why}">—`
+      +(a.na_reason?`<i>${esc(a.na_reason.length>14?a.na_reason.slice(0,14)+'…':a.na_reason)}</i>`:'')+'</span>'
+    : `<span class="evt-val" title="${why}"><b class="evt-score ${a.score>=4?'ok':(a.score>=3?'warn':'bad')}">`
+      +`${a.score}</b>${drift}</span>`;
+  // 美观度行：带上「查看产物」（产物取该用例自己的清单）
+  const art=(a.key==='aesthetics')?evArtBtn(evProducts(c)):'';
+  return `<td><div class="evt-row">${name}${cv}${art}</div></td>`;
+}
+const clip=(s,n)=>{s=String(s??'');return s.length>n?s.slice(0,n)+'…':s;};
+/* 指标排序：一律按后端下发的 dim_order，保证每张表排布一致 */
+function dimRank(sm){
+  const order=sm.dim_order||[];
+  return (a,b)=>{
+    const ia=order.indexOf(a.key), ib=order.indexOf(b.key);
+    return (ia<0?999:ia)-(ib<0?999:ib);
+  };
+}
+/* 单个用例一张三列表格：行=指标，单元格=该用例在该项上的分值；
+   表尾一行给出各维度列在本用例内的均分（只聚合本用例，不跨用例）。 */
+function evCaseTable(c,i,sm){
+  const cols=evCols(sm);
+  const dims=(c.scores||[]).slice().sort(dimRank(sm));
+  const byCol=cols.map(col=>dims.filter(d=>col.groups.includes(d.group)));
+  const rows=Math.max(1, ...byCol.map(v=>v.length));
+  let t='<table class="ev-tbl"><thead><tr>'
+    +cols.map(col=>`<th title="${esc(col.label)}">${esc(col.label)}</th>`).join('')
+    +'</tr></thead><tbody>';
+  for(let r=0;r<rows;r++)
+    // 传入用例对象：美观度行据此渲染「查看产物」按钮（产物取该用例自己的清单）
+    t+='<tr>'+cols.map((col,j)=>evCell(byCol[j][r], c)).join('')+'</tr>';
+  // 表尾：每个维度列的均分 —— 只聚合本用例已评分项，不跨用例；
+  // 满分档一律为 5（1-5 / 0-3-5 / 5-0 / ratio），原始分可直接平均；全列未评分显示「—」
+  t+='<tfoot><tr>'+cols.map((col,j)=>{
+    const vals=byCol[j].filter(d=>d.score!=null).map(d=>d.score);
+    const m=vals.length?Math.round(vals.reduce((x,y)=>x+y,0)/vals.length*10)/10:null;
+    const tip=`${col.label} 在本用例 ${vals.length} 项已评分指标上的均分（不跨用例聚合）`;
+    return `<td class="evt-total" title="${esc(tip)}">维度均分 `
+      +(m!=null?`<b>${m}</b>`:'<span style="color:var(--tx3)">—</span>')+'</td>';
+  }).join('')+'</tr></tfoot></table>';
+  const je=String(c.judge_error||'');
+  const meta=[];
+  // 未分类用例按「结果质量」评（口径见 core/eval_rubric.applicable_dimensions），
+  // 这里必须写清是默认口径，否则会被误读成教学 / 非教学结论
+  const sceneLbl=c.scene?((c.scene_kind==='teaching'?'教学·':'')+c.scene)
+    :'未分类（默认按结果质量评）';
+  meta.push(`<span class="ver">${esc(sceneLbl)}`
+    +(c.scene_source==='inferred'
+      ?`<span class="tag-infer" title="用例未声明场景，按问题原文推断，命中：${esc((c.scene_evidence||[]).join('、'))}">推断</span>`
+      :'')+'</span>');
+  if(c.requirement_kinds!==undefined)
+    meta.push(`<span class="ver">产物要求：`
+      +((c.requirement_kinds||[]).length
+        ?`<span class="mono">${c.requirement_kinds.map(esc).join('、')}</span>`
+        :'无（未要求交付产物）')
+      +((c.requirement_source==='inferred')?'（按原文推断）':'')+'</span>');
+  if(je) meta.push(`<span class="pill bad" title="${esc(je)}">判分失败</span>`);
+  if(c.degraded_input) meta.push(`<span class="pill warn" title="${esc(c.input_note||'')}">降级输入</span>`);
+  // 判分依据留档：默认折叠，展开可核对「模型当时看到了什么」（含本地参考值）
+  const factsBox=c.objective_facts
+    ?`<div class="ev-facts" onclick="this.classList.toggle('open')">`
+      +`<div class="ev-facts-hd">模型收到的客观事实（判分依据）`
+      +`<span class="ev-facts-tip">点击展开 / 收起</span></div>`
+      +`<pre class="pb-detail">${esc(JSON.stringify(c.objective_facts,null,1))}</pre></div>`:'';
+  return `<div class="card ev-case">
+    <div class="ev-case-hd">
+      <div class="ev-case-tt"><b style="font-size:12.5px">${esc(c.case_id)}</b>
+        <span class="ev-case-prompt" title="${esc(c.prompt||'')}">${esc(clip(c.prompt||'（无提示词）',78))}</span></div>
+      <div class="ev-case-meta">${meta.join('')}</div>
+      ${je?`<div class="ev-case-err">判分失败根因：${esc(je)}`
+        +(c.judge_raw?`<div class="pb-detail">${esc(c.judge_raw)}</div>`:'')+'</div>':''}
+    </div>${t}${factsBox}</div>`;
+}
+function evalTab(){
+  const j=lastRoundData||{};
+  if(!j.run_id) return '<div class="empty">请先选择一个轮次</div>';
+  if(EVAL_STATE && EVAL_STATE.running) return evRunning();
+  if(!j.evaluation) return evEmpty();
+  return evResult(j.evaluation);
+}
+function evEmpty(){
+  return `<div class="empty" style="padding:24px 0">
+    <div style="font-size:13px;color:var(--tx2);margin-bottom:12px">该轮次尚未做质量评估</div>
+    <div class="note" style="max-width:660px;margin:0 auto 16px;text-align:left">
+      评估会调用「模型设置」中配置的模型，逐用例按 20 项指标判分：教学问题评「教学专业质量」，
+      非教学与**未分类**用例评「结果质量」（未分类是默认口径）；「安全与可靠」与
+      「系统与 Agent 能力」两类都评；美观度归结果质量列、不分场景恒评。
+      其中安全红线、执行成功率、自纠正、任务完成率、交付效率、产物类型与格式覆盖率会由日志算出
+      <b>客观事实</b>，随请求发给模型作为判分依据（任务完成率只看最终回复是否被截断、
+      以及用户要求的产物是否真的产出，如「生成 PPT」→ 看产物里有没有 pptx；
+      不看内容是否切题、是否拒绝回答）。
+      每个用例一张三列评分表：<b>结果质量 / 教学专业质量 · 安全与可靠 · 系统与 Agent 能力</b>，
+      行=指标，单元格=本用例分值，表尾附本用例各维度均分；
+      悬停<b>指标名</b>看评分标准，悬停<b>分数</b>看判定理由。
+    </div>
+    <button class="btn-primary" onclick="startEval()">开始评估</button></div>`;
+}
+function evRunning(){
+  const s=EVAL_STATE||{}, done=s.done||0, total=s.total||0;
+  const pct=total?Math.round(done*100/total):0;
+  return `<div class="eval-bar"><b style="font-size:12.5px">评估进行中</b>
+      <span class="pill">${done} / ${total||'—'}</span>
+      <span class="spacer"></span>
+      <button class="btn-stop" onclick="stopEval()">停止</button></div>
+    <div class="pbar"><i style="width:${pct}%"></i></div>
+    <div class="eval-console">${(s.lines||[]).map(esc).join('<br>')||'启动中…'}</div>`;
+}
+/* 告警条：判分整体失败必须一眼可见。
+   旧界面把它渲染成维度级的「模型未返回该项」，看起来像模型漏答，
+   实际多是自己侧的 Key / 来源 IP 白名单 / 模型名配错 —— 必须给出可操作根因。 */
+function evAlert(sm){
+  const failed=sm.failed_cases||0, cov=sm.llm_coverage||{};
+  const exp=cov.expected||0, got=cov.scored||0;
+  const zero=exp>0 && got===0;
+  if(!failed && !zero) return '';
+  const errs=sm.judge_errors||[];
+  const raw=errs.map(e=>String(e.reason||'')).join('\n');
+  const reasons=errs.slice(0,2).map(e=>esc(e.reason||'')+(e.count>1?`（${e.count} 条）`:'')).join('<br>');
+  let tip='';
+  if(/403|allowlist|白名单|Source IP|来源 IP/i.test(raw))
+    tip='请在模型供应商控制台把该来源 IP 加入 API Key 的白名单（出口 IP 可能变化，必要时按 CIDR 放行）。';
+  else if(/未配置模型名/.test(raw))
+    tip='请在「模型设置」中填写模型名或端点 ID 后再评估。';
+  else if(/模型输出无法解析/.test(raw))
+    tip='模型返回的不是合法 JSON：可调高 config.yaml 中 llm.max_tokens 后重试。';
+  return `<div class="ev-alert">
+    <div class="ev-alert-hd">⚠ 本轮评估不完整${failed?`：${failed} 条用例判分失败`:''}</div>
+    <div class="ev-alert-bd">
+      ${zero?`<div>送模型的维度 <b>0 / ${exp}</b> 项拿到分值 —— 本轮综合分只剩硬规则分值，<b>不代表模型判定结果</b>。</div>`:''}
+      ${reasons?`<div class="mono">${reasons}</div>`:''}
+      ${tip?`<div>${tip}</div>`:''}
+    </div></div>`;
+}
+/* 公式与口径只供「成本与效率」等仍需要综合分的内部计算使用；
+   本轮测试综合分模块已删除；跨用例均分一并取消 —— 每张逐用例表的表尾
+   只给本用例自己的维度均分。后端仍按原口径落盘 overall_score_100 /
+   overall_normalized / column_means，供 API 消费者与历史产物自解释；界面不再展示。 */
+function evResult(ev){
+  const sm=ev.summary||{}, cases=ev.cases||[];
+  // 指标元信息（旧产物没有该字段 → 空对象，hover 只显示分值标签，不报错）
+  EV_RUBRIC=ev.rubric||{};
+  let h='<div class="eval-bar"><span class="ver">生成于 '+esc(ev.generated_at||'')+'</span>'
+    +`<span class="ver">耗时 ${ev.elapsed_s??'—'}s</span>`
+    +`<span class="ver">judge token ${(ev.judge_usage||{}).total_tokens??0}</span>`
+    +'<span class="spacer"></span><button class="btn-ghost" onclick="startEval()">重新评估</button></div>';
+  h+=evAlert(sm);
+  // 判分失败已由上方告警条统一呈现；此处只列「用例处理异常」，避免同一原因刷屏两次
+  const errs=(ev.errors||[]).filter(e=>e.kind!=='judge');
+  if(errs.length) h+=`<div class="note warn">${errs.length} 条用例处理异常：`
+    +errs.slice(0,3).map(e=>esc((e.case_id||'')+' '+(e.error||''))).join('；')+'</div>';
+  // 每个用例一张三列评分表：行=指标，单元格=本用例分值，表尾=本用例各维度均分
+  h+='<h3 class="sec">逐用例评分'
+    +'<span class="gr-hint">悬停任一指标可查看判定标准与判定方式；每张表末行附本用例各维度均分</span></h3>';
+  cases.forEach((c,i)=>{ h+=evCaseTable(c,i,sm); });
+  h+='<h3 class="sec" style="margin-top:16px">成本与效率</h3>'+evCost(ev);
+  return h;
+}
+function evCost(ev){
+  const u=ev.judge_usage||{};
+  let tin=0,tout=0;
+  for(const c of ev.cases||[]) for(const s of (c.scores||[]))
+    if(s.key==='cost_control'){ tin+=(s.evidence||{}).input_tokens_est||0; tout+=(s.evidence||{}).output_tokens_est||0; }
+  return '<div class="tbl-card"><table>'
+    +`<tr><td>评审模型 token（输入 / 输出）</td><td style="text-align:right"><b>${u.input_tokens??0} / ${u.output_tokens??0}</b></td></tr>`
+    +`<tr><td>被测智能体 token 估算（输入 / 输出）</td><td style="text-align:right"><b>${tin} / ${tout}</b></td></tr>`
+    +`<tr><td>评估总耗时</td><td style="text-align:right"><b>${ev.elapsed_s??'—'}s</b></td></tr>`
+    +'</table></div>'
+    +'<div class="note" style="margin-top:8px">被测智能体 token 为字符量折算估算（日志未记录官方 usage）；评审模型 token 来自接口返回的 usage。</div>';
+}
+async function startEval(){
+  const j=lastRoundData||{}; if(!j.run_id) return;
+  if(!LLM_SRV.configured){
+    alert('尚未配置模型：请先在「模型设置」填写供应商地址、API Key 与模型名，并通过「测试连接」。');
+    return;
+  }
+  try{
+    const r=await fetch('/api/evaluate',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({run_id:j.run_id})});
+    const x=await r.json();
+    if(!x.ok){
+      // 启动前探活失败：把供应商原文（含它看到的来源 IP）原样亮出来，用户才知道该改什么
+      const p=x.preflight||{};
+      alert('无法开始评估：'+(x.message||'未知错误')
+        +(p.status?`\n\nHTTP ${p.status}`:'')
+        +(p.detail?`\n供应商返回：${p.detail}`:''));
+      if(currentTab==='eval' && $('tabBody')) $('tabBody').innerHTML=evalTab();
+      return;
+    }
+    EVAL_STATE={running:true,done:0,total:0,lines:[]};
+    if(currentTab==='eval') $('tabBody').innerHTML=evalTab();
+    pollEval();
+  }catch(e){ alert('请求失败：'+e.message); }
+}
+async function stopEval(){ try{ await fetch('/api/evaluate/stop',{method:'POST'}); }catch(e){} }
+async function refreshEvalStatus(){
+  try{ EVAL_STATE=await (await fetch('/api/eval/status')).json(); }
+  catch(e){ return null; }
+  if(currentTab==='eval' && $('tabBody')) $('tabBody').innerHTML=evalTab();
+  return EVAL_STATE;
+}
+function pollEval(){
+  if(EVAL_TIMER) clearInterval(EVAL_TIMER);
+  EVAL_TIMER=setInterval(async()=>{
+    const s=await refreshEvalStatus();
+    if(!s) return;
+    if(!s.running && s.finished){
+      clearInterval(EVAL_TIMER); EVAL_TIMER=null;
+      if(s.error) alert('评估结束，但有错误：'+s.error);
+      if(currentRound) await openRoundById(currentRound);
+    }
+  },1500);
+}
+
+/* ================= 初始化 ================= */
+let lastRoundData=null;
+const _renderRound=renderRound;
+renderRound=function(data){ lastRoundData=data; _renderRound(data); };
+
+(async function init(){
+  try{
+    const c=await (await fetch('/api/config')).json();
+    $('ver').textContent=c.app_name||'';
+  }catch(e){}
+  // 各初始化步骤独立容错：任何一步抛错只跳过该步，
+  // 不能中断后面的步骤（否则环境选择器等会静默失效，且毫无提示）
+  const step=async fn=>{ try{ await fn(); }catch(e){ console.error('init step failed:', e); } };
+  await step(loadLLM);
+  await step(loadUploads);  // 附件库：用例行的「库(n)」计数与库列表都依赖它
+  step(refreshEvalStatus).then(s=>{ if(s && s.running) pollEval(); });
+  step(renderCases);
+  await step(loadEnv);
+  await step(loadRounds);
+  const j=await (await fetch('/api/run/status')).json();
+  renderStatus(j);
+  if(j.running) setRunning(true);
+  // 应用可能被外部启动/关闭，定期刷新状态以更新环境与关闭按钮的可用性
+  setInterval(refreshAppStatus, 5000);
+  const rs=await (await fetch('/api/rounds')).json();
+  if(rs.rounds.length) openRoundById(rs.rounds[0].run_id);
+})();
+
+async function openRoundById(rid){
+  currentRound=rid; currentCase=0;
+  const j=await (await fetch('/api/rounds/'+rid)).json();
+  if(!j.error){ lastRoundData=j; renderRound(j); }
+  document.querySelectorAll('.round-item').forEach(el=>{
+    el.classList.toggle('active', el.textContent.includes(rid));
+  });
+}
+</script>
+</body>
+</html>
