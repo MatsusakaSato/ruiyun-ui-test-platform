@@ -653,13 +653,15 @@ def delete_preset_cases(ids) -> tuple[bool, str, int]:
 
 
 def reveal_in_finder(target: str) -> tuple[bool, str]:
-    """在 Finder 中定位目标文件/目录（macOS）。
+    """在文件管理器中定位目标文件/目录（跨平台）。
 
     为什么需要后端代劳：浏览器禁止 http:// 页面跳转到 file://
     （Not allowed to load local resource），因此无法从前端直接打开本机文件。
-    这里由本地服务调用 `open -R`，交给 Finder 选中并弹窗。
+    这里由本地服务代劳：
+      - macOS：调用 `open -R`，交给 Finder 选中并弹窗
+      - Windows：调用 `explorer /select,<path>`，打开资源管理器并选中
 
-    open -R 需要文件已存在；不存在则退回打开其父目录。
+    目标不存在则退回打开其父目录。
     """
     p = Path(target).expanduser()
     if p.is_file():
@@ -681,7 +683,7 @@ def reveal_in_finder(target: str) -> tuple[bool, str]:
         return True, path_arg
     except subprocess.CalledProcessError as exc:
         msg = (exc.stderr or b"").decode("utf-8", "replace").strip()
-        return False, f"open -R 执行失败：{msg or exc}"
+        return False, f"文件管理器调用失败：{msg or exc}"
     except Exception as exc:
         return False, f"{type(exc).__name__}: {exc}"
 

@@ -273,13 +273,17 @@ class RuiyunUIDriver:
         """显式关闭由本驱动启动的应用进程（默认路径不会调用）。
 
         只对「我们自己启动的」实例生效（_launched_by_us）；复用的实例不归我们管。
+        Windows 不支持 os.killpg，改用 proc.terminate()/proc.kill()。
         """
         if self.proc and self._launched_by_us:
             try:
-                os.killpg(os.getpgid(self.proc.pid), signal.SIGTERM)
+                if sys.platform == "win32":
+                    self.proc.terminate()
+                else:
+                    os.killpg(os.getpgid(self.proc.pid), signal.SIGTERM)
             except Exception:
                 try:
-                    self.proc.terminate()
+                    self.proc.kill()
                 except Exception:
                     pass
             self.proc = None

@@ -69,7 +69,7 @@ h3.sec::before{content:"";width:3px;height:13px;background:var(--accent);border-
 .round-item:hover{border-color:var(--accent)}
 .round-item.active{border-color:var(--accent);background:#f0f6ff}
 .round-item .rid{font-weight:600;font-size:12.5px}
-/* 轮次名链接：点它在访达中打开该轮次文件夹（不触发外层的 openRound） */
+/* 轮次名链接：点它在文件管理器中打开该轮次文件夹（不触发外层的 openRound） */
 .round-item .rid-link{color:inherit;text-decoration:none;border-bottom:1px dashed var(--tx3);cursor:pointer}
 .round-item .rid-link:hover{color:var(--accent);border-bottom-color:var(--accent)}
 .round-item .rmeta{font-size:11px;color:var(--tx3);margin-top:3px;display:flex;gap:8px;flex-wrap:wrap}
@@ -199,7 +199,7 @@ tr:last-child td{border-bottom:none}
   border:none;background:none;padding:8px 10px;border-radius:8px;cursor:pointer;
   font-size:12.5px;font-family:inherit;color:var(--tx);white-space:nowrap}
 .sm-item:hover{background:#f1f5f9}
-/* 应用设置：路径输入框旁的「在访达中打开」按钮 */
+/* 应用设置：路径输入框旁的「在文件管理器中打开」按钮 */
 .inp-row{display:flex;gap:6px;align-items:center}
 .inp-row input{flex:1 1 auto}
 .reveal-btn{flex:0 0 auto;font-size:13.5px;line-height:1;padding:7px 9px;
@@ -391,7 +391,7 @@ tr:last-child td{border-bottom:none}
 .evt-na{flex:0 0 auto;margin-left:auto;font-size:11.5px;color:var(--tx3);max-width:56%;cursor:help;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .evt-na i{margin-left:4px;font-style:normal;font-size:10.5px}
-/* 美观度行的「查看产物」：轻量文字按钮，复用 /api/reveal 在 Finder 中定位。
+/* 美观度行的「查看产物」：轻量文字按钮，复用 /api/reveal 在文件管理器中定位。
    无可用产物时置灰禁用，不隐藏 —— 让「没有产物 / 找不到文件」可见，而不是静默消失 */
 .evt-art{flex:0 0 auto;font-size:10.5px;color:var(--accent);cursor:pointer;
   border:1px solid var(--line);border-radius:9px;padding:1px 7px;white-space:nowrap;
@@ -448,7 +448,7 @@ tr:last-child td{border-bottom:none}
   </span>
   <span class="opt">
     <button class="btn-ghost" id="btnCloseApp" title="关闭应用实例">✕ 关闭实例</button>
-    <span class="q" data-tip="关闭当前运行的应用实例（含手动从 Dock 启动的）。
+    <span class="q" data-tip="关闭当前运行的应用实例（含手动启动的）。
 关闭后可重新选择环境，下次运行时会按所选环境启动。
 测试运行期间不可关闭。">?</span>
   </span>
@@ -460,7 +460,7 @@ tr:last-child td{border-bottom:none}
     </div>
     <span class="q" data-tip="设置二级菜单：
 - 应用与工作区：被测应用路径 / 会话日志目录 / 用户工作区目录，
-  每个路径旁的 📁 按钮可在访达中打开当前生效路径
+  每个路径旁的 📁 按钮可在文件管理器中打开当前生效路径
 - 模型设置：供应商地址与 API Key（用于质量评估）
 工作区内含预设用例、附件库、轮次归档与 config.yaml。">?</span>
   </span>
@@ -667,30 +667,30 @@ tr:last-child td{border-bottom:none}
         <label for="appBinInp">被测应用可执行文件路径（选填）</label>
         <div class="inp-row">
           <input id="appBinInp" type="text" autocomplete="off" spellcheck="false"
-                 placeholder="/Applications/睿云智能工作台.app/Contents/MacOS/睿云智能工作台"/>
+                 placeholder=""/>
           <button class="reveal-btn" onclick="revealCfgPath('binary')"
-                  title="在访达中打开当前生效的应用路径">📁</button>
+                  title="在文件管理器中打开当前生效的应用路径">📁</button>
         </div>
-        <span class="fhint">留空使用默认：/Applications/睿云智能工作台.app/Contents/MacOS/睿云智能工作台</span>
+        <span class="fhint" id="appBinHint">留空使用系统默认路径</span>
       </div>
       <div class="fld">
         <label for="appLogInp">会话日志根目录（选填）</label>
         <div class="inp-row">
           <input id="appLogInp" type="text" autocomplete="off" spellcheck="false"
-                 placeholder="~/.srtclaw/workspace/session"/>
+                 placeholder=""/>
           <button class="reveal-btn" onclick="revealCfgPath('session_root')"
-                  title="在访达中打开当前生效的日志目录">📁</button>
+                  title="在文件管理器中打开当前生效的日志目录">📁</button>
         </div>
-        <span class="fhint">被测应用产生的日志地址（sess_* 会话目录的父目录）。留空使用默认：~/.srtclaw/workspace/session</span>
+        <span class="fhint" id="appLogHint">被测应用产生的日志地址（sess_* 会话目录的父目录）。留空使用系统默认路径</span>
       </div>
       <div class="fld">
         <label for="wsInp">用户工作区目录（选填）</label>
         <div class="inp-row">
           <input id="wsInp" type="text" autocomplete="off" spellcheck="false"/>
           <button class="reveal-btn" onclick="revealCfgPath('workspace')"
-                  title="在访达中打开当前生效的工作区目录">📁</button>
+                  title="在文件管理器中打开当前生效的工作区目录">📁</button>
         </div>
-        <span class="fhint">非功能性数据（预设用例 testcases.yaml、附件库 uploads/、轮次归档 rounds/、config.yaml）的存放目录。留空使用 ~/.ruiyun-autotest；改动后旧数据自动迁移到新目录</span>
+        <span class="fhint" id="wsHint">非功能性数据（预设用例 testcases.yaml、附件库 uploads/、轮次归档 rounds/、config.yaml）的存放目录。留空使用系统默认目录；改动后旧数据自动迁移到新目录</span>
       </div>
       <div class="probe-box" id="appCfgState" style="display:none"></div>
     </div>
@@ -958,6 +958,13 @@ async function openAppCfg(){
     $('appLogInp').placeholder=d.session_root.value||'(空)';
     $('wsInp').value=d.workspace.source==='local'?d.workspace.value:'';
     $('wsInp').placeholder=d.workspace.value||'(空)';
+    // 动态更新 hint 文字，消除 HTML 内的平台特定路径字符串
+    if($('appBinHint') && d.binary.value)
+      $('appBinHint').textContent='留空使用系统默认路径：'+d.binary.value;
+    if($('appLogHint') && d.session_root.value)
+      $('appLogHint').textContent='被测应用产生的日志地址（sess_* 会话目录的父目录）。留空使用系统默认路径：'+d.session_root.value;
+    if($('wsHint') && d.workspace.value)
+      $('wsHint').textContent='非功能性数据（预设用例、附件库、轮次归档、config.yaml）的存放目录。留空使用系统默认目录：'+d.workspace.value+'；改动后旧数据自动迁移到新目录';
   }catch(e){ appCfgMsg('err','请求失败：'+e.message); }
 }
 function closeAppCfg(){ $('appMask').classList.remove('on'); }
@@ -978,7 +985,7 @@ $('settingsMenu').onclick=e=>{
   if(act==='app') openAppCfg();
   else if(act==='model') openLlm();
 };
-/* 📁 按钮：在访达中打开「当前生效路径」（不是输入框草稿值 ——
+/* 📁 按钮：在文件管理器中打开「当前生效路径」（不是输入框草稿值 ——
    草稿还没保存；生效值以 APP_CFG_DESC 快照为准，弹窗打开/保存后刷新） */
 let APP_CFG_DESC=null;
 function revealCfgPath(kind){
@@ -1035,14 +1042,14 @@ $('appCfgReset').onclick=async()=>{
   $(id).addEventListener('input',()=>{ if(LLM_TESTED) llmInvalidate(); });
 });
 
-/* 会话定位：浏览器禁止 http 页面跳转 file://，所以走后端 open -R 在 Finder 中选中。
+/* 会话定位：浏览器禁止 http 页面跳转 file://，所以走后端在文件管理器中选中。
    目标为会话文件夹（含 session.messages.json 等全部产物）。悬停显示完整路径。 */
 function sessionLink(c, label){
   const txt = label ?? (c.session_id||'—');
   const p = c.session_log_path;
   if(!p) return `<span class="mono">${esc(txt)}</span>`;
   return `<a class="sess-link mono" href="#" data-path="${esc(p)}"
-             title="在 Finder 中显示会话文件夹：${esc(p)}"
+             title="在文件管理器中显示会话文件夹：${esc(p)}"
              onclick="revealInFinder(event,this)">${esc(txt)}</a>`;
 }
 
@@ -1503,7 +1510,7 @@ function renderStatus(j){
 }
 
 /* ================= 轮次 ================= */
-let ROUND_DIR='';   // 轮次归档根目录（服务端下发），轮次名链接据此打开访达文件夹
+let ROUND_DIR='';   // 轮次归档根目录（服务端下发），轮次名链接据此打开文件管理器
 async function loadRounds(){
   const j=await (await fetch('/api/rounds')).json();
   ROUND_DIR=(j.dir||'').replace(/\/+$/,'');
@@ -1516,7 +1523,7 @@ async function loadRounds(){
     return `<div class="round-item ${currentRound===r.run_id?'active':''}" onclick="openRound('${r.run_id}')">
       <div class="rid">${folder
         ?`<a class="rid-link" href="#" data-path="${esc(folder)}"
-            title="在访达中打开该轮次文件夹：${esc(folder)}"
+            title="在文件管理器中打开该轮次文件夹：${esc(folder)}"
             onclick="event.stopPropagation();revealInFinder(event,this)">${esc(r.run_id)}</a>`
         :esc(r.run_id)}</div>
       <div class="rmeta">
@@ -1928,12 +1935,12 @@ function evProducts(c){
   const nameOf=x=>String(x.path||x.abs||'').split('/').pop()||'(未命名)';
   return {items, names:items.map(nameOf), ok:items.filter(x=>x.abs)};
 }
-/* 「查看产物」按钮：复用已有 revealInFinder → POST /api/reveal（后端 open -R）。
+/* 「查看产物」按钮：复用已有 revealInFinder → POST /api/reveal（后端在文件管理器中定位）。
    多产物时按钮标注数量、悬停列出全部文件名，点击定位第一个可解析到的产物。 */
 function evArtBtn(p){
   if(!p) return '';
   const tip='产物：'+p.names.join('、')
-    +(p.ok.length?`\n点击在 Finder 中显示：${p.ok[0].abs}`
+    +(p.ok.length?`\n点击在文件管理器中显示：${p.ok[0].abs}`
                  :'\n本机未找到产物文件（按工作区解析不到绝对路径）');
   if(!p.ok.length)
     return `<span class="evt-art disabled" title="${esc(tip)}">查看产物</span>`;
