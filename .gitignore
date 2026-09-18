@@ -32,7 +32,9 @@ workspace/
 
 # ---------- 工具和编辑器 ----------
 .workbuddy/
+.codebuddy/
 .playwright-cli/
+.vscode/
 
 # ---------- 系统 ----------
 .DS_Store
