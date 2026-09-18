@@ -485,12 +485,8 @@ class RuiyunUIDriver:
                           timeout=15)
             time.sleep(0.35)
 
-    def _paste_image(self, path: str) -> tuple:
-        """备选投递：把图片写入系统剪贴板，再向输入框发 Cmd+V（仅 macOS）。
-
-        应用对**粘贴图片**有专门落盘兜底（savePastedImage），拿不到路径也能引用；
-        文档类粘贴没有这层兜底，所以只在拖拽未生效且文件是图片时才走这里。
-        """
+    def _clipboard_image_macos(self, path: str) -> tuple:
+        """把图片文件写入系统剪贴板（macOS：osascript）。"""
         # 用 osascript 的 argv 接收路径：路径是独立 argv 元素，不参与脚本
         # 字符串解析，从根本上关闭「文件名含特殊字符 → AppleScript 注入」的面。
         script = (
@@ -506,13 +502,56 @@ class RuiyunUIDriver:
             )
         except Exception as exc:
             return False, f"写入系统剪贴板失败：{type(exc).__name__}: {exc}"
+        return True, ""
+
+    def _clipboard_image_windows(self, path: str) -> tuple:
+        """把图片文件写入系统剪贴板（Windows：PowerShell + WinForms）。
+
+        路径经环境变量传入、不进脚本字符串 —— 与 osascript 的 argv 注入
+        防护同思路，规避引号/特殊字符转义问题。-STA 是剪贴板 API 的
+        线程要求（PS 5.1+ 默认 STA，显式指定以兼容旧版本）。
+        标准位图格式由系统托管，PowerShell 退出后剪贴板内容仍然有效。
+        """
+        ps = (
+            "Add-Type -AssemblyName System.Windows.Forms;"
+            "Add-Type -AssemblyName System.Drawing;"
+            "$img=[System.Drawing.Image]::FromFile($env:RUIYUN_CLIP_IMG);"
+            "[System.Windows.Forms.Clipboard]::SetImage($img);"
+            "$img.Dispose()"
+        )
+        env = dict(os.environ)
+        env["RUIYUN_CLIP_IMG"] = str(path)
+        try:
+            subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-STA", "-Command", ps],
+                env=env, check=True, stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE, timeout=20,
+            )
+        except Exception as exc:
+            return False, f"写入系统剪贴板失败：{type(exc).__name__}: {exc}"
+        return True, ""
+
+    def _paste_image(self, path: str) -> tuple:
+        """备选投递：把图片写入系统剪贴板，再向输入框发粘贴键（macOS / Windows）。
+
+        应用对**粘贴图片**有专门落盘兜底（savePastedImage），拿不到路径也能引用；
+        文档类粘贴没有这层兜底，所以只在拖拽未生效且文件是图片时才走这里。
+        """
+        if sys.platform == "win32":
+            ok, err = self._clipboard_image_windows(path)
+        else:
+            ok, err = self._clipboard_image_macos(path)
+        if not ok:
+            return False, err
         sel = self._resolve_input(wait_s=5)
         if not sel:
             return False, "找不到输入框，无法粘贴"
         self._focus_input(sel)
         time.sleep(0.2)
-        key = {"modifiers": 4, "key": "v", "code": "KeyV",
-               "windowsVirtualKeyCode": 86, "nativeVirtualKeyCode": 9}
+        # 粘贴键修饰符按平台取：macOS Cmd+V（Meta=4），Windows/Linux Ctrl+V（Ctrl=2）
+        key = {"modifiers": 2 if sys.platform == "win32" else 4, "key": "v",
+               "code": "KeyV", "windowsVirtualKeyCode": 86,
+               "nativeVirtualKeyCode": 86 if sys.platform == "win32" else 9}
         try:
             self.cdp.call("Input.dispatchKeyEvent",
                           {"type": "rawKeyDown", "commands": ["paste"], **key}, timeout=10)

@@ -4,6 +4,9 @@ chcp 65001 >nul
 set DIR=%~dp0
 set PY=%DIR%.venv\Scripts\python.exe
 set LOG=%DIR%logs\platform.log
+:: 服务输出重定向到文件时 Python 默认走本地 ANSI 代码页（中文系统为 GBK），
+:: 显式约定 UTF-8，保证日志里的中文不乱码
+set PYTHONIOENCODING=utf-8
 
 if not exist "%PY%" (
     echo 找不到 %PY%

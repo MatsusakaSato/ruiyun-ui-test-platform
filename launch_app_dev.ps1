@@ -2,7 +2,14 @@ param (
     [string]$Mode = "run"
 )
 
-$APP_BIN = if ($env:LOCALAPPDATA) { "$env:LOCALAPPDATA\Programs\睿云智能工作台\睿云智能工作台.exe" } else { "C:\Program Files\睿云智能工作台\睿云智能工作台.exe" }
+# 应用安装位置随打包方式而变（NSIS 每用户 / Program Files），按候选探测，
+# 与 core/settings.py 的 Windows 默认路径逻辑保持同一口径
+$APP_BIN_CANDIDATES = @(
+    "$env:LOCALAPPDATA\Programs\睿云智能工作台\睿云智能工作台.exe",
+    "$env:ProgramFiles\睿云智能工作台\睿云智能工作台.exe",
+    "${env:ProgramFiles(x86)}\睿云智能工作台\睿云智能工作台.exe"
+) | Where-Object { $_ -and (Test-Path $_) }
+$APP_BIN = if ($APP_BIN_CANDIDATES) { $APP_BIN_CANDIDATES[0] } else { "$env:LOCALAPPDATA\Programs\睿云智能工作台\睿云智能工作台.exe" }
 $APP_KILL_PATTERN = "睿云智能工作台.exe"
 $DEBUG_PORT = if ($env:DEBUG_PORT) { $env:DEBUG_PORT } else { "9222" }
 $LOG_FILE = if ($env:LOG_FILE) { $env:LOG_FILE } else { "$PSScriptRoot\logs\srtclaw_app.log" }

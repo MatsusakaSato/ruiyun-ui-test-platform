@@ -291,16 +291,21 @@ class RunState:
                 # 避免宿主环境回收进程树时把正在运行的测试连带杀掉（与应用启动同策略）。
                 # stdin=DEVNULL：服务以独立进程组启动后继承的 stdin 是坏 fd，
                 # 子进程会因 init_sys_streams Bad file descriptor 起不来。
+                # 编码两端显式约定 UTF-8：Windows 管道默认走本地 ANSI 代码页
+                # （中文系统为 GBK），子进程中文输出会解码错乱 —— 父端按 UTF-8
+                # 读，并用 PYTHONIOENCODING 让子进程按 UTF-8 写。
                 kwargs = {}
                 if sys.platform == "win32":
                     kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | 0x00000008  # DETACHED_PROCESS
                 else:
                     kwargs["start_new_session"] = True
+                env = dict(os.environ)
+                env["PYTHONIOENCODING"] = "utf-8"
 
                 self.proc = subprocess.Popen(
                     cmd, cwd=str(ROOT), stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT, text=True, bufsize=1,
-                    stdin=subprocess.DEVNULL, **kwargs
+                    stderr=subprocess.STDOUT, encoding="utf-8", errors="replace",
+                    bufsize=1, stdin=subprocess.DEVNULL, env=env, **kwargs
                 )
             except Exception as exc:
                 return False, f"启动失败: {exc}"
@@ -675,7 +680,9 @@ def reveal_in_finder(target: str) -> tuple[bool, str]:
         path_arg = str(parent)
     try:
         if sys.platform == "win32":
-            subprocess.run(["explorer", "/select,", path_arg], check=True,
+            # explorer /select, 成功打开窗口时也常返回退出码 1（历史行为），
+            # 不能用 check=True 判成败；调用本身未抛异常即视为已拉起资源管理器
+            subprocess.run(["explorer", "/select,", path_arg],
                            capture_output=True, timeout=10)
         else:
             subprocess.run(["open", "-R", path_arg], check=True,

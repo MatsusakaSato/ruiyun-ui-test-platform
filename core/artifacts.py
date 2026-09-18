@@ -96,14 +96,15 @@ class ArtifactSet:
 
 
 def kind_of(path: str) -> str:
-    name = (path or "").rsplit("/", 1)[-1]
+    # 归一化反斜杠：Windows 路径（C:\a\b.png）若直接进入此函数也能取对文件名
+    name = (path or "").replace("\\", "/").rsplit("/", 1)[-1]
     if "." not in name:
         return ""
     return EXT_KINDS.get(name.rsplit(".", 1)[-1].lower(), "")
 
 
 def _stem(path: str) -> str:
-    name = (path or "").rsplit("/", 1)[-1]
+    name = (path or "").replace("\\", "/").rsplit("/", 1)[-1]
     return name.rsplit(".", 1)[0].lower() if "." in name else name.lower()
 
 

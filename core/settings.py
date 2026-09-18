@@ -25,12 +25,35 @@ _ROOT = Path(__file__).resolve().parent.parent
 # ---------------------------------------------------------------- 内置默认地址
 # 不配置任何一项时的回退值（expanduser 支持 ~ 写法）
 import sys
-import os
 
 if sys.platform == "win32":
-    DEFAULT_APP_BINARY = os.path.join(os.environ.get("LOCALAPPDATA", "C:\\"), "Programs", "睿云智能工作台", "睿云智能工作台.exe")
-    DEFAULT_SESSION_ROOT = os.path.join(os.environ.get("APPDATA", str(Path.home())),
-                                        "srtclaw", "workspace", "session")
+    def _first_existing(cands: list, fallback: str) -> str:
+        """取第一个真实存在的候选；都不存在时回退首选。
+
+        应用的安装位置（NSIS 每用户装到 %LOCALAPPDATA%\\Programs、
+        每机器装到 Program Files）与日志落盘位置（%APPDATA% 或用户主目录
+        点目录）随打包方式而变，静态写死任一个都会在另一类机器上开箱即失败。
+        """
+        for c in cands:
+            try:
+                if c and os.path.exists(c):
+                    return c
+            except OSError:
+                continue
+        return fallback
+
+    _local = os.environ.get("LOCALAPPDATA", "")
+    _roam = os.environ.get("APPDATA", "")
+    _exe = "睿云智能工作台.exe"
+    DEFAULT_APP_BINARY = _first_existing([
+        os.path.join(_local, "Programs", "睿云智能工作台", _exe),
+        os.path.join(os.environ.get("ProgramFiles", ""), "睿云智能工作台", _exe),
+        os.path.join(os.environ.get("ProgramFiles(x86)", ""), "睿云智能工作台", _exe),
+    ], os.path.join(_local or "C:\\", "Programs", "睿云智能工作台", _exe))
+    DEFAULT_SESSION_ROOT = _first_existing([
+        os.path.join(_roam, "srtclaw", "workspace", "session"),
+        os.path.join(str(Path.home()), ".srtclaw", "workspace", "session"),
+    ], os.path.join(_roam or str(Path.home()), "srtclaw", "workspace", "session"))
 else:
     DEFAULT_APP_BINARY = "/Applications/睿云智能工作台.app/Contents/MacOS/睿云智能工作台"
     DEFAULT_SESSION_ROOT = "~/.srtclaw/workspace/session"
