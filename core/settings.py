@@ -29,9 +29,11 @@ import os
 
 if sys.platform == "win32":
     DEFAULT_APP_BINARY = os.path.join(os.environ.get("LOCALAPPDATA", "C:\\"), "Programs", "睿云智能工作台", "睿云智能工作台.exe")
+    DEFAULT_SESSION_ROOT = os.path.join(os.environ.get("APPDATA", str(Path.home())),
+                                        "srtclaw", "workspace", "session")
 else:
     DEFAULT_APP_BINARY = "/Applications/睿云智能工作台.app/Contents/MacOS/睿云智能工作台"
-DEFAULT_SESSION_ROOT = "~/.srtclaw/workspace/session"
+    DEFAULT_SESSION_ROOT = "~/.srtclaw/workspace/session"
 
 # 界面覆盖文件：与 .llm_secrets.json 同模式（0600、gitignore）
 SETTINGS_FILE = _ROOT / ".app_settings.json"

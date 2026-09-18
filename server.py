@@ -1049,8 +1049,11 @@ class Handler(BaseHTTPRequestHandler):
                     self._json({"ok": False, "message": f"{label}含非法字符"}, 400)
                     return
             if binary and not Path(binary).expanduser().exists():
+                hint = ("请确认路径为可执行文件（Windows 示例：%LOCALAPPDATA%\\Programs\\...\\xxx.exe）"
+                        if sys.platform == "win32"
+                        else "请确认 .app/Contents/MacOS/ 下的可执行文件")
                 self._json({"ok": False,
-                            "message": f"应用路径不存在：{binary}（请确认 .app/Contents/MacOS/ 下的可执行文件）"},
+                            "message": f"应用路径不存在：{binary}（{hint}）"},
                            400)
                 return
             if user_ws and not Path(user_ws).expanduser().parent.is_dir():
