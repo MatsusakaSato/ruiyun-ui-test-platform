@@ -30,5 +30,12 @@ artifacts/uploads/
 # 历史位置 workspace/ 若仍存在也一并忽略
 workspace/
 
+# ---------- 工具和编辑器 ----------
+.workbuddy/
+.playwright-cli/
+
 # ---------- 系统 ----------
 .DS_Store
+
+# ---------- 开发辅助脚本 ----------
+scripts/
