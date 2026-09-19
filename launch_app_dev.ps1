@@ -6,8 +6,10 @@ param (
 # 与 core/settings.py 的 Windows 默认路径逻辑保持同一口径
 $APP_BIN_CANDIDATES = @(
     "$env:LOCALAPPDATA\Programs\睿云智能工作台\睿云智能工作台.exe",
+    "$env:LOCALAPPDATA\睿云智能工作台\睿云智能工作台.exe",
     "$env:ProgramFiles\睿云智能工作台\睿云智能工作台.exe",
-    "${env:ProgramFiles(x86)}\睿云智能工作台\睿云智能工作台.exe"
+    "${env:ProgramFiles(x86)}\睿云智能工作台\睿云智能工作台.exe",
+    "$env:ProgramW6432\睿云智能工作台\睿云智能工作台.exe"
 ) | Where-Object { $_ -and (Test-Path $_) }
 $APP_BIN = if ($APP_BIN_CANDIDATES) { $APP_BIN_CANDIDATES[0] } else { "$env:LOCALAPPDATA\Programs\睿云智能工作台\睿云智能工作台.exe" }
 $APP_KILL_PATTERN = "睿云智能工作台.exe"
@@ -51,16 +53,17 @@ if ($Mode -eq "--dry-run") {
 
 # ---------- 4. 结束应用 ----------
 function Stop-App {
-    $running = Get-Process -Name "睿云智能工作台" -ErrorAction SilentlyContinue
+    $procNames = @("睿云智能工作台", "srtclaw")
+    $running = Get-Process -Name $procNames -ErrorAction SilentlyContinue
     if (-not $running) {
         Write-Output "启动前检查：无残留实例"
         return $true
     }
     Write-Output "清理已有实例..."
     for ($i = 1; $i -le 5; $i++) {
-        Stop-Process -Name "睿云智能工作台" -Force -ErrorAction SilentlyContinue
+        Stop-Process -Name $procNames -Force -ErrorAction SilentlyContinue
         Start-Sleep -Seconds 1
-        if (-not (Get-Process -Name "睿云智能工作台" -ErrorAction SilentlyContinue)) {
+        if (-not (Get-Process -Name $procNames -ErrorAction SilentlyContinue)) {
             Write-Output "  已清理干净（第 $i 轮）"
             return $true
         }

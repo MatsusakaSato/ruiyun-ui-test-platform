@@ -30,7 +30,7 @@ if sys.platform == "win32":
     def _first_existing(cands: list, fallback: str) -> str:
         """取第一个真实存在的候选；都不存在时回退首选。
 
-        应用的安装位置（NSIS 每用户装到 %LOCALAPPDATA%\\Programs、
+        应用的安装位置（NSIS 每用户装到 %LOCALAPPDATA%\Programs、
         每机器装到 Program Files）与日志落盘位置（%APPDATA% 或用户主目录
         点目录）随打包方式而变，静态写死任一个都会在另一类机器上开箱即失败。
         """
@@ -47,16 +47,28 @@ if sys.platform == "win32":
     _exe = "睿云智能工作台.exe"
     DEFAULT_APP_BINARY = _first_existing([
         os.path.join(_local, "Programs", "睿云智能工作台", _exe),
+        os.path.join(_local, "睿云智能工作台", _exe),
         os.path.join(os.environ.get("ProgramFiles", ""), "睿云智能工作台", _exe),
         os.path.join(os.environ.get("ProgramFiles(x86)", ""), "睿云智能工作台", _exe),
+        os.path.join(os.environ.get("ProgramW6432", ""), "睿云智能工作台", _exe),
     ], os.path.join(_local or "C:\\", "Programs", "睿云智能工作台", _exe))
     DEFAULT_SESSION_ROOT = _first_existing([
         os.path.join(_roam, "srtclaw", "workspace", "session"),
         os.path.join(str(Path.home()), ".srtclaw", "workspace", "session"),
+        os.path.join(_roam, "睿云智能工作台", "workspace", "session"),
+        os.path.join(_local, "srtclaw", "workspace", "session"),
     ], os.path.join(_roam or str(Path.home()), "srtclaw", "workspace", "session"))
+    DEFAULT_AGENT_CONFIG = _first_existing([
+        os.path.join(_roam, "srtclaw", "config", "config.yaml"),
+        os.path.join(str(Path.home()), ".srtclaw", "config", "config.yaml"),
+    ], os.path.join(_roam or str(Path.home()), "srtclaw", "config", "config.yaml"))
 else:
     DEFAULT_APP_BINARY = "/Applications/睿云智能工作台.app/Contents/MacOS/睿云智能工作台"
     DEFAULT_SESSION_ROOT = "~/.srtclaw/workspace/session"
+    DEFAULT_AGENT_CONFIG = "~/.srtclaw/config/config.yaml"
+
+# 项目内置配置模版（用于全新环境初始化）
+TEMPLATE_CONFIG = _ROOT / "config.template.yaml"
 
 # 界面覆盖文件：与 .llm_secrets.json 同模式（0600、gitignore）
 SETTINGS_FILE = _ROOT / ".app_settings.json"
@@ -150,6 +162,17 @@ def effective_config(cfg: dict) -> dict:
 
     wr = _clean(paths.get("workspace_root"))
     paths["workspace_root"] = str(Path(wr).expanduser()) if wr else str(sr.parent)
+
+    agent_cfg = _clean(paths.get("agent_config"))
+    if sys.platform == "win32":
+        if not agent_cfg or agent_cfg.startswith("/Users/") or agent_cfg.startswith("/"):
+            _roam = os.environ.get("APPDATA", "") or os.environ.get("USERPROFILE", "")
+            if not _roam:
+                _roam = "C:\\Users\\Default\\AppData\\Roaming"
+            agent_cfg = os.path.join(_roam, "srtclaw", "config", "config.yaml")
+    elif not agent_cfg:
+        agent_cfg = DEFAULT_AGENT_CONFIG
+    paths["agent_config"] = str(Path(agent_cfg).expanduser())
     return cfg
 
 
@@ -233,11 +256,18 @@ def rounds_dir() -> Path:
 
 
 def config_path() -> Path:
-    """平台配置文件：工作区/config.yaml（历史位置自动迁移）。"""
+    """平台配置文件：工作区/config.yaml（历史位置自动迁移，缺失时自愈初始化）。"""
     p = user_workspace() / "config.yaml"
     _migrate_first(_LEGACY_CONFIG, p)
     if str(user_workspace()) != DEFAULT_WORKSPACE:
         _migrate_legacy(Path(DEFAULT_WORKSPACE) / "config.yaml", p)
+    # 若全新克隆环境下工作区尚无配置，从内置模版初始化
+    if not p.is_file() and TEMPLATE_CONFIG.is_file():
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(str(TEMPLATE_CONFIG), str(p))
+        except OSError:
+            pass
     return p
 
 
@@ -275,7 +305,10 @@ def describe(cfg: dict) -> dict:
 
     binary = str(app.get("binary") or "")
     sr = str(paths.get("session_root") or "")
+    agent_cfg = str(paths.get("agent_config") or "")
     return {
+        "platform": sys.platform,
+        "is_windows": sys.platform == "win32",
         "binary": {
             "value": binary,
             "source": _source(ov.get("app_binary"), raw_app.get("binary")),
@@ -285,6 +318,10 @@ def describe(cfg: dict) -> dict:
             "value": sr,
             "source": _source(ov.get("session_root"), raw_paths.get("session_root")),
             "exists": Path(sr).is_dir() if sr else False,
+        },
+        "agent_config": {
+            "value": agent_cfg,
+            "exists": Path(agent_cfg).is_file() if agent_cfg else False,
         },
         "workspace_root": {"value": str(paths.get("workspace_root") or "")},
         # 用户工作区（非功能性数据：预设用例 / 附件库）；config.yaml 无此配置项，

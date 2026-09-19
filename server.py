@@ -221,13 +221,25 @@ def close_app() -> tuple[bool, str]:
         return False, "binary 配置无法解析为可执行文件名"
     try:
         if sys.platform == "win32":
-            r = subprocess.run(["taskkill", "/F", "/IM", exe_name], capture_output=True, timeout=10)
+            names = [exe_name]
+            if not exe_name.lower().endswith(".exe"):
+                names.append(f"{exe_name}.exe")
+            for alias in ("睿云智能工作台.exe", "srtclaw.exe"):
+                if alias not in names:
+                    names.append(alias)
+            killed = False
+            for name in names:
+                res = subprocess.run(["taskkill", "/F", "/IM", name], capture_output=True, timeout=10)
+                if res.returncode == 0:
+                    killed = True
+            if not killed and app_is_running():
+                return False, "未找到运行中的应用进程"
         else:
             r = subprocess.run(["pkill", "-x", exe_name], capture_output=True, timeout=10)
+            if r.returncode != 0:
+                return False, "未找到运行中的应用进程"
     except Exception as exc:
         return False, f"关闭失败：{type(exc).__name__}: {exc}"
-    if r.returncode != 0:
-        return False, "未找到运行中的应用进程"
 
     # 等端口释放，让用户点完就有明确反馈
     for _ in range(20):
@@ -332,6 +344,9 @@ class RunState:
                 proc.wait(timeout=3)
             except Exception:
                 try:
+                    if sys.platform == "win32":
+                        subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                                       capture_output=True, timeout=5)
                     proc.kill()
                 except Exception:
                     pass
@@ -680,10 +695,17 @@ def reveal_in_finder(target: str) -> tuple[bool, str]:
         path_arg = str(parent)
     try:
         if sys.platform == "win32":
-            # explorer /select, 成功打开窗口时也常返回退出码 1（历史行为），
-            # 不能用 check=True 判成败；调用本身未抛异常即视为已拉起资源管理器
-            subprocess.run(["explorer", "/select,", path_arg],
-                           capture_output=True, timeout=10)
+            # Windows 资源管理器规范：
+            # 1) 路径统一规范化为反斜杠 os.path.normpath
+            # 2) 文件用 /select,"C:\path\to\file" 选中定位（连写避免参数被空格拆分）
+            # 3) 目录则直接打开进入该目录，而不是在父目录中高亮文件夹
+            # 4) explorer 打开窗口时常返回退出码 1，未抛异常即视为已拉起
+            win_path = os.path.normpath(path_arg).replace("/", "\\")
+            if p.is_file():
+                cmd = ["explorer", f"/select,{win_path}"]
+            else:
+                cmd = ["explorer", win_path]
+            subprocess.run(cmd, capture_output=True, timeout=10)
         else:
             subprocess.run(["open", "-R", path_arg], check=True,
                            capture_output=True, timeout=10)
@@ -693,6 +715,10 @@ def reveal_in_finder(target: str) -> tuple[bool, str]:
         return False, f"文件管理器调用失败：{msg or exc}"
     except Exception as exc:
         return False, f"{type(exc).__name__}: {exc}"
+
+
+# 跨平台语义别名：在 Windows 下对应资源管理器，在 macOS 下对应 Finder
+reveal_in_folder = reveal_in_finder
 
 
 def delete_round(run_id: str) -> tuple[bool, str]:
@@ -1164,7 +1190,13 @@ class Handler(BaseHTTPRequestHandler):
                 body = {}
             try:
                 target = Path(str(body.get("path") or "")).resolve()
-                target.relative_to(uploads_dir().resolve())
+                base_dir = uploads_dir().resolve()
+                if sys.platform == "win32":
+                    if not str(target).lower().startswith(str(base_dir).lower()):
+                        self._json({"ok": False, "message": "只允许删除附件库内的文件"}, 400)
+                        return
+                else:
+                    target.relative_to(base_dir)
             except (ValueError, OSError):
                 self._json({"ok": False, "message": "只允许删除附件库内的文件"}, 400)
                 return

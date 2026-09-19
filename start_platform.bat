@@ -9,24 +9,26 @@ set LOG=%DIR%logs\platform.log
 set PYTHONIOENCODING=utf-8
 
 if not exist "%PY%" (
-    echo 找不到 %PY%
-    echo 请先创建项目虚拟环境：python -m venv .venv ^&^& .venv\Scripts\pip install -r requirements.txt
+    echo [错误] 找不到虚拟环境 Python: %PY%
+    echo 请先初始化环境：
+    echo   python -m venv .venv
+    echo   .venv\Scripts\pip install -r requirements.txt
+    echo.
     pause
     exit /b 1
 )
 
 curl -s -m 2 -o nul http://127.0.0.1:8765/api/rounds
 if %ERRORLEVEL% EQU 0 (
-    echo 服务已在运行
+    echo 测试平台服务已在运行，直接打开控制台...
     goto open_browser
 )
 
 echo 启动测试平台服务...
 if not exist "%DIR%logs" mkdir "%DIR%logs"
 
-:: 修复：使用 cmd /c 包装确保重定向作用于子进程而非 start 本身
-:: 同时明确指定工作目录 (%DIR%) 和脚本绝对路径，避免路径解析失败
-start /B "" cmd /c "cd /d "%DIR%" && "%PY%" "%DIR%server.py" --port 8765 >>"%LOG%" 2>&1"
+:: 使用 start /B 后台启动服务并重定向日志
+start "" /B cmd /c "cd /d "%DIR%" && "%PY%" "%DIR%server.py" --port 8765 >> "%LOG%" 2>&1"
 
 :: 等待服务就绪（最多 10 秒，每秒探测一次）
 set /a WAIT=0
@@ -38,7 +40,7 @@ set /a WAIT+=1
 if %WAIT% LSS 10 goto wait_loop
 
 echo.
-echo [警告] 服务启动超时，请查看日志：%LOG%
+echo [警告] 服务启动超时，请查看日志文件：%LOG%
 pause
 exit /b 1
 

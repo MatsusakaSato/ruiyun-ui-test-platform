@@ -26,23 +26,34 @@
 - **`run_repro.py`**：重现特定测试步骤或用例的入口，便于在出现 Bug 时快速复现。
 - **`server.py`**：平台内建 Web 服务端，用于运行和托管 Web 可视化控制台。
 - **`discover_ui.py`**：DOM 提取探针工具，用于导出并分析应用当前的 UI 结构。
-- **`start_platform.command` / `launch_app_dev.sh`**：快速启动工作台/测试平台服务的快捷脚本。
+- **`start_platform.command` / `start_platform.bat` / `start_platform.ps1`**：双击一键启动测试平台服务并自动打开浏览器（分别适配 macOS、Windows CMD 与 PowerShell）。
+- **`launch_app_dev.sh` / `launch_app_dev.ps1`**：以开发环境参数拉起被测应用的快捷脚本。
 
 ## 快速开始
 
 1. **环境准备**
    请确保您已经安装了对应的 Python 依赖，建议在虚拟环境中运行：
-   ```bash
-   pip install -r requirements.txt
-   ```
+   - **macOS / Linux**:
+     ```bash
+     python3 -m venv .venv && source .venv/bin/activate
+     pip install -r requirements.txt
+     ```
+   - **Windows**:
+     ```cmd
+     python -m venv .venv
+     .venv\Scripts\pip install -r requirements.txt
+     ```
 
-2. **运行全链路测试**
+2. **启动测试平台可视化控制台**
+   - **Windows 用户**：直接双击运行 `start_platform.bat`（或在 PowerShell 中执行 `.\start_platform.ps1`）。
+   - **macOS 用户**：直接双击运行 `start_platform.command`。
+   - **命令行通用启动**：
+     ```bash
+     python server.py --port 8765
+     ```
+   服务就绪后，浏览器访问 `http://127.0.0.1:8765` 即可进入可视化测试平台。
+
+3. **运行全链路测试（命令行方式）**
    ```bash
    python run_pipeline.py
-   ```
-
-3. **启动测试平台控制台**
-   您可以直接运行 `start_platform.command`（Mac），或者启动服务端以在浏览器中查看可视化测试结果：
-   ```bash
-   python server.py
    ```
