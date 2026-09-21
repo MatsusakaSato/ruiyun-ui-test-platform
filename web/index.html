@@ -79,6 +79,11 @@ h3.sec::before{content:"";width:3px;height:13px;background:var(--accent);border-
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .round-item.active .rprompt{background:#eff6ff;border-left-color:var(--accent)}
 .round-item .rprompt .rp-more{color:var(--tx3);margin-left:4px;font-size:10.5px}
+/* 产物目录：本轮有产物时出现在轮次元信息行，点它打开产物所在目录 */
+.round-item .rart{color:var(--accent);cursor:pointer;text-decoration:none;
+  border-bottom:1px dashed var(--accent)}
+.round-item .rart:hover{background:#eff6ff;border-bottom-style:solid}
+.round-item .rart.busy{opacity:.5;pointer-events:none}
 /* 删除按钮：默认淡出，悬停轮次时才显现，避免误点 */
 .round-del{position:absolute;top:8px;right:8px;width:22px;height:22px;border-radius:6px;
   background:#fef2f2;color:#b91c1c;font-size:14px;line-height:1;padding:0;
@@ -1569,12 +1574,30 @@ async function loadRounds(){
         <span>${esc(r.finished_at)}</span>
         <span>用例 ${okc}/${all} 通过</span>
         <span>${fnd?fnd+' 个问题':'无问题'}</span>
+        ${artLink(r)}
       </div>
       ${promptPreview(r)}
       <button class="round-del" title="删除该轮次归档"
               onclick="delRound(event,'${r.run_id}')">×</button>
     </div>`;
   }).join('');
+}
+
+/* 产物目录：只有本轮**确实有产物**时才出现（不拿「没有产物」占位，避免噪音）。
+   路径全部由服务端下发（artifacts.root），前端不自己拼 —— 产物在工作区里的
+   落点由 agent 决定，前端拼不出来。悬停列出全部产物文件，点击打开所在目录。 */
+function artLink(r){
+  const a=r.artifacts||{};
+  if(!a.count || !a.root) return '';
+  const dirTip=a.multi_dir
+    ? '本轮产物分散在多个目录，这里打开它们的最近公共目录'
+    : '本轮产物所在目录';
+  const tip=`${dirTip}：${a.root}`;
+  const names=(a.paths||[]).map(p=>String(p).replace(/\\/g,'/').split('/').pop());
+  const list=names.slice(0,12).join('\n')+(names.length>12?`\n…共 ${names.length} 件`:'');
+  return `<span class="rart${a.exists?'':' busy'}" data-path="${esc(a.root)}"
+      title="📁 ${esc(tip)}${list?'\n\n产物：\n'+esc(list):''}${a.exists?'':'\n\n（该目录当前不存在）'}"
+      onclick="event.stopPropagation();revealInFinder(event,this)">📁 产物目录 ${a.count} 件</span>`;
 }
 
 /* 轮次列表的提示词摘要：只显示前 PREVIEW_CHARS 个字符，超出省略。

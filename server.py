@@ -934,6 +934,17 @@ def delete_round(run_id: str) -> tuple[bool, str]:
     return True, rid
 
 
+def _load_evaluation(d: Path) -> dict | None:
+    """读轮次的 evaluation.json（没有/损坏时返回 None）。"""
+    f = d / "evaluation.json"
+    if not f.is_file():
+        return None
+    try:
+        return json.loads(f.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
 def list_rounds() -> list:
     out = []
     if not ROUNDS.is_dir():
@@ -954,6 +965,11 @@ def list_rounds() -> list:
                 }
                 for c in (s.get("cases") or [])
             ]
+            # 产物概览也要随列表下发：轮次列表左侧的「📁 产物目录」链接就是用它渲染的，
+            # 只在详情接口给的话，列表里永远看不到这个入口（只有点进去才发现）。
+            # 只有**尚未评估**的轮次才没有产物信息 —— 那是口径本身决定的，
+            # 不是这里漏了：产物由评估阶段从会话日志抽取（见 core/artifacts.py）。
+            evaluation = _load_evaluation(d)
             out.append({
                 # run_id 一律取**目录名**：路由 /api/rounds/<rid> 是按目录名解析的，
                 # 若这里用 JSON 内的 run_id，两者不一致时列表点开的是另一个轮次（或 404）。
@@ -965,7 +981,8 @@ def list_rounds() -> list:
                 "summary": s.get("summary") or {},
                 "repro_summary": s.get("repro_summary") or {},
                 "round_skills": s.get("round_skills") or [],
-                "has_evaluation": (d / "evaluation.json").is_file(),
+                "has_evaluation": evaluation is not None,
+                "artifacts": _round_artifacts(d, evaluation),
                 "cases": cases,
             })
         except Exception:
@@ -973,23 +990,78 @@ def list_rounds() -> list:
     return out
 
 
+def _round_artifacts(d: Path, evaluation: dict | None) -> dict:
+    """本轮产物的落点概览：给界面一个「打开产物目录」的入口。
+
+    为什么要**一个目录**而不是一堆文件链接：产物是 agent 写进工作区的一棵目录树
+    （根目录 + 每次任务的子目录 + 各种中间文件），用户真正想做的是「进去翻一翻」，
+    而不是在界面上逐个点开。所以这里挑一个最有信息量的目录下发给前端：
+
+      1) 有产物绝对路径 → 取**这些产物的公共父目录**（最贴近产物本身，
+         例如 <工作区>/空间名/任务名/）；
+      2) 否则退回评估时用的 `workspace_root`（本轮确实没有产物时的兜底；
+         历史 evaluation.json 没有本字段，同样落到这里）；
+      3) 再不行退回轮次归档目录 —— 至少能打开本轮自己的东西。
+
+    `count`/`kinds`/`multi_dir` 用于界面文案：「N 件（docx、pptx…）」，
+    跨目录时明确写「最近公共目录」，不假装那就是唯一的产物目录。
+    """
+    ev = evaluation or {}
+    items = []
+    for c in (ev.get("cases") or []):
+        for a in (c.get("artifacts") or []):
+            items.append(a)
+
+    paths = [str(a.get("abs_path") or "").strip() for a in items]
+    paths = [p for p in paths if p]
+    kinds = sorted({str(a.get("kind") or "").strip() for a in items
+                    if str(a.get("kind") or "").strip()})
+
+    root = ""
+    multi_dir = False
+    if paths:
+        try:
+            parents = [Path(p).parent for p in paths]
+            common = Path(os.path.commonpath([str(x) for x in parents]))
+            # 产物都在同一个目录里时，直接用那个目录；跨目录则用最近公共父目录
+            multi_dir = len({str(x) for x in parents}) > 1
+            root = str(common if multi_dir else parents[0])
+        except (ValueError, OSError):
+            root = str(Path(paths[0]).parent)
+    if not root:
+        root = str(ev.get("workspace_root") or "").strip()
+    if not root:
+        root = str(d)
+
+    return {
+        "count": len(items),
+        "kinds": kinds,
+        # 本轮所有产物路径（去重、保序）：界面悬停可列全，便于核对
+        "paths": list(dict.fromkeys(paths)),
+        "root": root,
+        "exists": Path(root).is_dir() if root else False,
+        "multi_dir": multi_dir,
+        "resolved": bool(paths),
+    }
+
+
 def load_round(run_id: str) -> dict | None:
     d = ROUNDS / run_id
     if not d.is_dir():
         return None
     detail = summary = evaluation = None
-    fd, fs, fe = d / "round_detail.json", d / "round_summary.json", d / "evaluation.json"
+    fd, fs = d / "round_detail.json", d / "round_summary.json"
     try:
         if fd.is_file():
             detail = json.loads(fd.read_text(encoding="utf-8"))
         if fs.is_file():
             summary = json.loads(fs.read_text(encoding="utf-8"))
-        if fe.is_file():
-            evaluation = json.loads(fe.read_text(encoding="utf-8"))
     except Exception:
         return None
+    evaluation = _load_evaluation(d)
     return {"run_id": run_id, "summary": summary, "detail": detail,
-            "evaluation": evaluation}
+            "evaluation": evaluation,
+            "artifacts": _round_artifacts(d, evaluation)}
 
 
 # ---------------------------------------------------------------- HTTP

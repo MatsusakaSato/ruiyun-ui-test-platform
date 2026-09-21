@@ -778,6 +778,7 @@ class EvalOutcome:
     errors: list = field(default_factory=list)
     usage: dict = field(default_factory=dict)
     elapsed_s: float = 0.0
+    workspace_root: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -788,6 +789,10 @@ class EvalOutcome:
             "errors": self.errors,
             "judge_usage": self.usage,
             "elapsed_s": round(self.elapsed_s, 1),
+            # 产物根目录（agent 工作区）：界面「产物目录」链接据此调 /api/reveal
+            # 在文件管理器中打开 —— 本轮产物散落在子目录里，用户要的是「能进去翻」，
+            # 而不是只能一件件点「查看产物」。前端不猜路径，一律用这里下发的值。
+            "workspace_root": self.workspace_root,
             "rubric_version": "1.0",
             # 评分口径标识：llm_all = 全部维度分值由模型判定（客观事实随请求发送）。
             # 历史产物没有本字段，即旧口径（本地公式判分 + 模型补判），据此区分可比性。
@@ -1104,7 +1109,8 @@ def evaluate_round(run_id: str, *, on_progress=None, cancel=None,
                            "error": str(row.get("judge_error"))})
 
     outcome = EvalOutcome(run_id=run_id, cases=rows, errors=errors,
-                          usage=usage_total, elapsed_s=time.time() - t0)
+                          usage=usage_total, elapsed_s=time.time() - t0,
+                          workspace_root=_workspace_root(judge_cfg))
     outcome.summary = _aggregate(rows)
     data = outcome.to_dict()
     # 指标元信息随产物落盘：界面 hover 解释用「当时的口径」，锚点日后调整也不会错配

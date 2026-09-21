@@ -65,7 +65,7 @@
 | `artifacts/case_results.json` | 逐用例执行与断言明细 |
 | `artifacts/repro_results.json` | 复现配方与复现率验证结果 |
 | `~/.ruiyun-autotest/rounds/<run_id>/` | 单轮归档：`cases.yaml`、`round_detail.json`、`round_summary.json`、`report.html`、`console.log` |
-| `~/.ruiyun-autotest/rounds/<run_id>/evaluation.json` | 质量评估结果：逐用例 20 项分值（含 `nature`=维度性质 / `basis`=分值来源 / `llm_used` / `hint_score`=本地参考值 / `na_reason` / `evidence`）、`cases[].objective_facts`（发给模型的客观事实包）与 `summary`（`score_source`、`scored_cases`、`failed_cases`、`llm_coverage`、`judge_errors`、`redline_overrides`）；顶层 `scoring_mode` 标识评分口径 |
+| `~/.ruiyun-autotest/rounds/<run_id>/evaluation.json` | 质量评估结果：逐用例 20 项分值（含 `nature`=维度性质 / `basis`=分值来源 / `llm_used` / `hint_score`=本地参考值 / `na_reason` / `evidence`）、`cases[].objective_facts`（发给模型的客观事实包）、`cases[].artifacts[].abs_path`（产物绝对路径）与顶层 `workspace_root`（产物解析根，供界面「产物目录」用）与 `summary`（`score_source`、`scored_cases`、`failed_cases`、`llm_coverage`、`judge_errors`、`redline_overrides`）；顶层 `scoring_mode` 标识评分口径 |
 | `artifacts/uploads/` | 用例附件的本机落盘位置（已 gitignore）；运行时由驱动拖拽投递给被测应用 |
 | `.llm_secrets.json` | 模型凭证（0600，已 gitignore）；**跑自测不会触碰它** |
 
@@ -97,6 +97,8 @@
 **用例意图的来源**：评估判定场景（教学/非教学，决定评哪一组）与「是否要求交付文件」（决定任务完成率、格式遵循度）时，只认用例自身声明的 `labels`；缺省时由 `core/case_intent.py` 从问题原文**基于显式证据**推断（产物要求需「产出动词 + 类型词」同句），并把来源（`labels` / `inferred` / `none`）与命中证据落盘、在界面标注「推断」。**不得按同名 id 借用预设标签** —— 界面手输用例的 id 是自动序号，与 `testcases.yaml` 的 id 必然重名，借了就会给无关问题凭空安上文件要求。
 
 **用例附件投递**：被测应用的「引用本地文件」本质是**绝对路径列表**（前端取 Electron `File.path`，上限 10 个），其文件选择入口是 Electron 原生选择框（前端桥接 API `chooseLocalFile`，网页端兜底就是 `window.prompt` 问路径），**不走 Chromium 的 file chooser** —— 所以 `setFileInputFiles` / `setInterceptFileChooserDialog` 都够不着它。平台的做法：附件先上传到本地服务落盘（`artifacts/uploads/`，行内上传与附件库复用并存），运行时由 `drivers/ui_driver.attach_files()` 用 `Input.dispatchDragEvent`（dragEnter→dragOver→drop，带 `files`）**拖拽投递**，并以「附件按钮 title 的 `(n/10)` 计数是否真的增加」判定成败；计数没动即判失败，投递失败仍发送但写 `ui_error`（避免「附件没送进去却算跑通」的假通过）。
+
+**产物目录（轮次级入口）**：产物**只在评估阶段**从会话日志抽取（`core/artifacts.extract_artifacts`，`evaluation.json.cases[].artifacts[].abs_path`）—— 所以**未评估的轮次没有产物信息**，这是口径本身决定的，不是漏了。界面在轮次列表的元信息行给出「📁 产物目录 N 件」链接（`server._round_artifacts` 下发 `{count,kinds,paths,root,exists,multi_dir,resolved}`），点击走 `/api/reveal` 打开目录：优先取本轮产物绝对路径的**公共父目录**（跨目录时 `multi_dir=true`，文案改为「最近公共目录」），无产物时回落 `evaluation.workspace_root`，再不行回落轮次归档目录。**该字段必须同时出现在 `/api/rounds` 列表与 `/api/rounds/<id>` 详情**（列表缺了链接就永远不显示，只有点进详情才发现）。前端只渲染服务端给的路径，不自己拼。「本轮无产物」时**不渲染**该链接（不拿占位符占版面），目录不存在时置灰并在悬停里写明原因。
 
 **安全红线的「引述 vs 执行」**：`core/safety_scan.py` 扫描最终答复、产出物文本与工具实参。命中分两类：**工具实参命中 = 试图执行，任何语气都不豁免**；散文（答复/产物）命中若整体处于拒绝/警示语境、且命中前没有「就要执行」的明确信号（`_EXEC_MARKERS`，刻意取窄）则**豁免** —— 不计红线，但记入 `evidence.noted_hits` 并交模型按 0/3/5 锚点判定。这层区分是必需的：拒绝执行时通常会**原文引用**那条危险命令来解释危害，只按正则命中判定的话，安全表现最好的回答反而会被判安全性 0 分（实测事故，见 `test_evaluator.py` 的 PASS 18）。
 
