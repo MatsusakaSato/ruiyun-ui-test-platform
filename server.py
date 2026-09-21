@@ -945,6 +945,11 @@ def _load_json(d: Path, name: str) -> dict | None:
         return None
 
 
+# 产物重算缓存：(run_id, 抽取版本) -> {case_id: (artifacts, kinds)}
+# 归档目录写完后内容不再变化，同进程内不必为列表/详情反复解析会话日志。
+_ART_BACKFILL_CACHE: dict = {}
+
+
 def _load_evaluation(d: Path) -> dict | None:
     """读轮次的 evaluation.json（没有/损坏时返回 None）。"""
     return _load_json(d, "evaluation.json")
@@ -975,6 +980,8 @@ def list_rounds() -> list:
             # 产物来自 round_detail.json（流水线落盘，跑完即有）；旧轮次没有该字段时
             # 回落到 evaluation.json —— 两种来源由 _artifact_items 统一处理。
             detail = _load_json(d, "round_detail.json")
+            # 老归档的产物清单要就地校正（抽取规则修过），列表与详情必须同一份数据
+            detail = _backfill_case_artifacts(detail, d)
             evaluation = _load_evaluation(d)
             out.append({
                 # run_id 一律取**目录名**：路由 /api/rounds/<rid> 是按目录名解析的，
@@ -997,16 +1004,28 @@ def list_rounds() -> list:
 
 
 def _artifact_items(detail: dict | None, evaluation: dict | None) -> tuple:
-    """本轮产物条目：优先取**流水线落的** round_detail.round_artifacts（跑完即有，
-    不需要质量评估），再回落到 evaluation.cases[].artifacts（历史轮次只有评估产物）。
+    """本轮产物条目，按来源优先级取第一份**非空**清单：
+
+      1) `round_detail.cases[].artifacts` —— 逐用例产物。**必须排第一**：
+         它总会经过 `_backfill_case_artifacts` 校正到当前抽取版本，
+         是唯一可靠的一份；
+      2) `round_detail.round_artifacts` —— 轮次级摊平清单（新轮次与逐用例一致；
+         老归档里可能还是当时抽错的那份，故只在没有逐用例数据时使用）；
+      3) `evaluation.cases[].artifacts` —— 仅评估产物的历史轮次。
 
     返回 (items, source)，source ∈ {"detail", "evaluation", ""}，用于界面说明
-    「这份清单是哪来的」—— 旧轮次没有 round_artifacts 字段，只能靠评估那份。
+    「这份清单是哪来的」。
     """
-    items = []
-    for a in ((detail or {}).get("round_artifacts") or []):
-        if isinstance(a, dict) and (a.get("path") or a.get("abs_path")):
-            items.append(a)
+    d = detail or {}
+    items: list = []
+    for c in (d.get("cases") or []):
+        for a in (c.get("artifacts") or []):
+            if isinstance(a, dict) and (a.get("path") or a.get("abs_path")):
+                items.append(a)
+    if items:
+        return items, "detail"
+    items = [a for a in (d.get("round_artifacts") or [])
+             if isinstance(a, dict) and (a.get("path") or a.get("abs_path"))]
     if items:
         return items, "detail"
     for c in ((evaluation or {}).get("cases") or []):
@@ -1082,10 +1101,79 @@ def load_round(run_id: str) -> dict | None:
             summary = json.loads(fs.read_text(encoding="utf-8"))
     except Exception:
         return None
+    detail = _backfill_case_artifacts(detail, d)
     evaluation = _load_evaluation(d)
     return {"run_id": run_id, "summary": summary, "detail": detail,
             "evaluation": evaluation,
             "artifacts": _round_artifacts(d, evaluation, detail)}
+
+
+def _backfill_case_artifacts(detail: dict | None, d: Path | None = None) -> dict | None:
+    """给旧归档补/重算逐用例产物清单。
+
+    产物抽取现在由流水线负责（`core.trajectory`），历史 `round_detail.json` 有两种情况：
+      * 完全没有 `artifacts` 字段（本次改动之前归档）；
+      * 有字段，但**抽取逻辑已经改过**（当时抽错过：幽灵产物、
+        脚本写出的文件漏抽）—— 记在 `artifacts_version` 里。
+    两种情况都回到会话日志现抽一次（纯读日志、无副作用），
+    版本与当前一致才跳过，避免每次读详情都重复解析。
+
+    重算结果按 (run_id, 抽取版本) 缓存：归档目录写完后内容不再变化，
+    同进程内不必反复解析（列表接口每轮都要用这份数据）。
+    """
+    if not isinstance(detail, dict):
+        return detail
+    cases = detail.get("cases") or []
+    if not cases:
+        return detail
+    from core.artifacts import EXTRACT_VERSION
+
+    stale = [c for c in cases
+             if "artifacts" not in c or c.get("artifacts_version") != EXTRACT_VERSION]
+    if not stale:
+        return detail
+
+    cache_key = (d.name, EXTRACT_VERSION) if d is not None else None
+    cached = _ART_BACKFILL_CACHE.get(cache_key) if cache_key else None
+    if cached is not None:
+        for c in stale:
+            hit = cached.get(str(c.get("case_id") or ""))
+            if hit is not None:
+                c["artifacts"] = hit[0]
+                c["artifact_kinds"] = hit[1]
+                c["artifacts_version"] = EXTRACT_VERSION
+        return detail
+
+    from core.artifacts import extract_artifacts, resolve_abs_path
+    from core.log_parser import parse_session
+
+    try:
+        ws_root = str((effective_config(_config_dict()).get("paths") or {})
+                      .get("workspace_root") or "")
+    except Exception:
+        ws_root = ""
+    fresh: dict = {}
+    for c in stale:
+        sess = str(c.get("session_dir") or "").strip()
+        arts: list = []
+        if sess and Path(sess).is_dir():
+            try:
+                trace = parse_session(Path(sess))
+            except Exception:
+                trace = None
+            if trace is not None:
+                a_set = extract_artifacts(trace.tool_calls)
+                arts = [{"kind": a.kind, "path": a.rel_path, "note": a.note,
+                         "abs_path": resolve_abs_path(a, ws_root)}
+                        for a in a_set.items]
+        kinds = sorted({str(a.get("kind") or "") for a in arts if str(a.get("kind") or "")})
+        c["artifacts"] = arts
+        c["artifact_kinds"] = kinds
+        c["artifacts_version"] = EXTRACT_VERSION
+        fresh[str(c.get("case_id") or "")] = (arts, kinds)
+    if cache_key:
+        _ART_BACKFILL_CACHE[cache_key] = fresh
+    return detail
 
 
 # ---------------------------------------------------------------- HTTP

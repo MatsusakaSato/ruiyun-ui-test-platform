@@ -122,6 +122,13 @@ h3.sec::before{content:"";width:3px;height:13px;background:var(--accent);border-
 .step.skill .dot{background:var(--skill)}
 /* 平台自动确认：与思考(灰)/工具(蓝)/失败(红)区分 */
 .step.confirm .dot{background:var(--p2)}
+/* 产物节点：绿点收尾；文件名本身就是链接（点它打开所在目录并选中该文件） */
+.step.artifact .dot{background:var(--ok)}
+.step.artifact.miss .dot{background:var(--tx3)}
+.step.artifact .art-link{font-size:12.5px;font-weight:600;color:var(--accent);
+  text-decoration:none;border-bottom:1px dashed var(--accent);word-break:break-all}
+.step.artifact .art-link:hover{background:#eff6ff;border-bottom-style:solid}
+.step.artifact .art-link.busy{opacity:.5;pointer-events:none}
 .badge.b-approx{background:#fef3c7;color:#b45309;font-weight:500;cursor:help}
 .step-head{display:flex;align-items:center;gap:8px;cursor:pointer;flex-wrap:wrap}
 .step-head .t-type{font-size:10.5px;color:var(--tx3);width:44px}
@@ -1806,8 +1813,7 @@ function caseTimeline(c){
       ${c.skills.map(s=>`<span class="badge" style="background:#ede9fe;color:#6d28d9">${esc(s.name)}</span>`).join(' ')}</div>`;
   }
   h+='<div class="tl">';
-  for(const st of (c.steps||[])){
-    if(st.type==='thinking'){
+  for(const st of (c.steps||[])){    if(st.type==='thinking'){
       const ctn=st.content||'';
       // 标题行取首行做概览，内容区展示全文（可滚动）
       const head=ctn.replace(/\s+/g,' ').slice(0,60);
@@ -1865,7 +1871,44 @@ function caseTimeline(c){
       </div>`;
     }
   }
+  // 产物：**放在时间轴最后**。产物是这条时间线走到头之后剩下的东西，
+  // 读完全程正好收尾；每条只给文件名，点它在文件管理器中定位该文件
+  //（资源管理器会打开其所在目录并选中它）。
+  for(const a of (c.artifacts||[])) h+=artifactStep(a);
   return h+'</div>';
+}
+
+/* 时间轴末尾的产物条目：一个「产物」节点 + 文件名链接。
+   有绝对路径 → 文件名可点（reveal 该文件，等于打开它所在目录并选中）；
+   解析不到 → 显示文件名 + 「未找到」灰标，不做假链接、不假装可点。 */
+function artifactStep(a){
+  const raw=String(a.abs_path||a.path||'');
+  const name=raw?raw.replace(/\\/g,'/').split('/').pop():'';
+  const label=name||a.kind||'(未命名产物)';
+  const kind=(a.kind&&a.kind!=='other')
+    ? `<span class="tag">${esc(a.kind)}</span>` : '';
+  if(a.abs_path){
+    return `<div class="step artifact"><span class="dot"></span>
+      <div class="step-head">
+        <span class="t-type">产物</span>
+        <a class="art-link" href="#" data-path="${esc(a.abs_path)}"
+           title="在${FM_NAME()}中显示该文件（并打开其所在目录）：${esc(a.abs_path)}"
+           onclick="revealInFinder(event,this)">${esc(label)}</a>
+        ${kind}
+      </div>
+    </div>`;
+  }
+  const why=(a.path?`工具只给了相对路径 ${a.path}，本机没找到对应文件：`
+                    :'本次调用没有返回文件路径：')
+    +(a.note?`${a.note}`:'');
+  return `<div class="step artifact miss"><span class="dot"></span>
+    <div class="step-head" title="${esc(why)}">
+      <span class="t-type">产物</span>
+      <span class="t-name">${esc(label)}</span>
+      ${kind}
+      <span class="badge b-approx">本机未找到</span>
+    </div>
+  </div>`;
 }
 
 /* ---- Tab: 问题发现（仅当前用例） ---- */

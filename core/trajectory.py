@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from core.artifacts import extract_artifacts, resolve_abs_path
+from core.artifacts import EXTRACT_VERSION, extract_artifacts, resolve_abs_path
 from core.models import CaseResult, ExecutionTrace, ToolCall
 
 # 思考内容与工具结果一律输出全文，不做长度截断
@@ -462,6 +462,9 @@ def build_case_detail(case: CaseResult, findings_by_step: dict | None = None,
             "abs_path": resolve_abs_path(a, ws_root),
         } for a in artifacts.items],
         "artifact_kinds": sorted(artifacts.kinds),
+        # 抽取逻辑版本：读取方据此判断要不要重算老归档
+        # （见 core.artifacts.EXTRACT_VERSION —— 规则修好后老轮次不该永远带着旧错）
+        "artifacts_version": EXTRACT_VERSION,
         "findings": [f.to_dict() if hasattr(f, "to_dict") else {
             "rule": f.rule, "severity": f.severity, "detail": f.detail,
             "tool": f.tool, "evidence": f.evidence, "step_index": f.step_index,

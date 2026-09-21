@@ -13,10 +13,17 @@
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+
+# 抽取逻辑版本：产物清单会随抽取规则修正而变（例如「失败的调用不算产物」
+# 「脚本里写出的文件要算产物」）。归档里记下版本号，读取方发现版本落后就**重算**，
+# 否则老轮次会永远带着当时抽错的清单（实测踩到过：指向不存在文件的幽灵产物）。
+EXTRACT_VERSION = 2
+
 
 # 扩展名 → 归一化产物类型
 EXT_KINDS = {
@@ -121,6 +128,24 @@ def is_producer(tool_name: str) -> bool:
     return bool(_PRODUCER_RE.search(n)) and n not in _EXCLUDE_TOOLS
 
 
+def _call_failed(obj: dict) -> bool:
+    """该次工具调用是否**明确失败**。
+
+    实测事故：`convert_markdown_to_docx` 返回
+    `{"success": false, "error": "File not found: 空白文档.docx.md"}` 时，
+    旧实现照样把它记成一件产物 —— 界面上就出现一个指向**不存在文件**的链接，
+    而真正产出的 `空白文档.docx`（由后续脚本生成）反倒没被记录。
+    判定刻意保守：只有明确 `success: false`，或有 error 且没有 `success: true`
+    才算失败；结果里没有这些字段的工具一律按成功处理（不误杀）。
+    """
+    if not isinstance(obj, dict) or not obj:
+        return False
+    ok = obj.get("success")
+    if ok is False:
+        return True
+    return bool(obj.get("error")) and ok is not True
+
+
 def extract_artifacts(tool_calls) -> ArtifactSet:
     """从工具调用序列抽取产出物。tool_calls 为 core.models.ToolCall 列表。"""
     written: dict = {}   # 已写入文件的正文：stem(小写) -> text，供转换类回填
@@ -132,6 +157,10 @@ def extract_artifacts(tool_calls) -> ArtifactSet:
         args = args if isinstance(args, dict) else {}
         obj = getattr(tc, "result_obj", None)
         obj = obj if isinstance(obj, dict) else {}
+
+        # 失败的调用既不记产物、也不参与「同名正文回填」
+        if _call_failed(obj):
+            continue
 
         body = _pick(args, _TEXT_KEYS)
         rel_arg = _pick(args, ("relative_path",))
@@ -165,7 +194,11 @@ def extract_artifacts(tool_calls) -> ArtifactSet:
             source_tool=name, note=note,
         ))
 
-    # 同一产物可能被多次引用（写入 + 转换）：按 (类型, 路径) 去重，优先保留有正文的
+    # 补一层：脚本真正写出来的文件
+    items.extend(_artifacts_from_commands(tool_calls, items))
+
+    # 同一产物可能被多次引用（写入 + 转换 / 写入 + 脚本）：按 (类型, 路径) 去重，
+    # 优先保留有正文的
     uniq: dict = {}
     for a in items:
         k = (a.kind, (a.rel_path or a.full_path).lower())
@@ -173,6 +206,61 @@ def extract_artifacts(tool_calls) -> ArtifactSet:
         if cur is None or (not cur.text and a.text):
             uniq[k] = a
     return ArtifactSet(items=list(uniq.values()))
+
+
+# 「执行类」工具：它们的参数里可能明写了脚本要写出的文件路径
+_EXEC_TOOL_RE = re.compile(r"(exec|run|shell|command|script)", re.I)
+# 绝对路径 + 产物后缀。同时容忍正斜杠写法；不跨引号/换行/分号，避免吞掉整段脚本
+_ABS_ARTIFACT_RE = re.compile(
+    r"[A-Za-z]:[\\/][^\"'<>|\r\n;]{0,200}?\.(?:docx|doc|pptx|ppt|xlsx|xls|csv|pdf"
+    r"|html|htm|md|txt|png|jpe?g|webp|gif|svg)",
+    re.I)
+
+
+def _artifacts_from_commands(tool_calls, existing: list) -> list:
+    """从「执行类 / 产出型」调用的参数文本里识别脚本真正写出的产物。
+
+    实测事故：agent 用 `mcp_exec_command` 跑 python 脚本生成了
+    `空白文档.docx`（随后把临时脚本删掉），而**唯一的产出型工具
+    `convert_markdown_to_docx` 还失败了** —— 结果平台一件产物都指不出来，
+    可真实交付物就躺在工作区里。脚本/命令正文通常会明写输出路径，
+    这里把它捞出来。
+
+    两条护栏，避免把「只是被读过的文件」算成产物：
+      1) 只扫执行类工具与产出型工具的**参数**（不做全工具扫描，read_file 之类不参与）；
+      2) 路径必须**真实存在**才记录（存在性校验），并在 note 里写明来源，
+         让界面能如实标注「按脚本/命令里的路径识别」，而不是假装是工具申报的产物。
+    """
+    known = {(a.rel_path or a.full_path).lower() for a in existing}
+    out: list = []
+    seen: set = set()
+    for tc in tool_calls or []:
+        name = getattr(tc, "name", "") or ""
+        if not (_EXEC_TOOL_RE.search(name) or is_producer(name)):
+            continue
+        obj = getattr(tc, "result_obj", None)
+        if _call_failed(obj if isinstance(obj, dict) else {}):
+            continue
+        args = getattr(tc, "arguments", None)
+        blob = json.dumps(args, ensure_ascii=False) if isinstance(args, dict) else ""
+        for raw in _ABS_ARTIFACT_RE.findall(blob):
+            p = raw.replace("\\\\", "\\").replace("/", "\\").strip()
+            low = p.lower()
+            if low in seen or low in known:
+                continue
+            seen.add(low)
+            try:
+                if not Path(p).is_file():
+                    continue
+            except (OSError, ValueError, RuntimeError):
+                continue
+            out.append(Artifact(
+                kind=kind_of(p) or "other",
+                rel_path=p, full_path=p, text="",
+                source_tool=name,
+                note="按脚本/命令里出现的输出路径识别（文件确实存在）",
+            ))
+    return out
 
 
 def resolve_abs_path(artifact: "Artifact", workspace_root: str = "") -> str:
