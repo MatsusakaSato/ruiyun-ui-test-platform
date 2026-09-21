@@ -22,10 +22,16 @@ from pathlib import Path
 # 抽取逻辑版本：产物清单会随抽取规则修正而变（例如「失败的调用不算产物」
 # 「脚本里写出的文件要算产物」）。归档里记下版本号，读取方发现版本落后就**重算**，
 # 否则老轮次会永远带着当时抽错的清单（实测踩到过：指向不存在文件的幽灵产物）。
-EXTRACT_VERSION = 2
+#   v2 → v3：只认用户可见的交付件（EXT_KINDS 白名单），
+#            agent 自己的临时脚本（.py 等）不再算产物。
+EXTRACT_VERSION = 3
 
 
-# 扩展名 → 归一化产物类型
+# 扩展名 → 归一化产物类型。
+# **这份表就是「算不算产物」的白名单**：只有它能识别的扩展名才进产物清单。
+# 口径是「用户能看到的东西」—— 交付给用户的文档/演示/表格/PDF/网页/图片/文本。
+# 反面例子（实测）：agent 常写 `_create_blank_docx.py`、`verify_ppt.py` 这类临时脚本
+# 来生成交付物，它们是过程的脚手架、不是给用户看的东西，一律不算产物。
 EXT_KINDS = {
     "docx": "docx", "doc": "docx",
     "pptx": "pptx", "ppt": "pptx",
@@ -128,6 +134,17 @@ def is_producer(tool_name: str) -> bool:
     return bool(_PRODUCER_RE.search(n)) and n not in _EXCLUDE_TOOLS
 
 
+def is_deliverable(path: str) -> bool:
+    """该路径是否是**给用户看的交付件**（EXT_KINDS 白名单内的扩展名）。
+
+    这是产物清单的最后一道闸：`.py`/`.json`/`.log`/无扩展名 等一律不算产物 ——
+    agent 生成交付物时常先写一个临时脚本再删掉，那些脚本是过程脚手架，
+    测试要覆盖的是「用户能看到的东西」，把它们混进产物清单只会制造噪音
+    （实测：`_create_blank_docx.py`、`verify_ppt.py`、`make_blank_ppt.py`）。
+    """
+    return bool(kind_of(path))
+
+
 def _call_failed(obj: dict) -> bool:
     """该次工具调用是否**明确失败**。
 
@@ -175,6 +192,10 @@ def extract_artifacts(tool_calls) -> ArtifactSet:
                 or _pick(args, _SOURCE_NAME_KEYS))
         if not path:
             continue
+        # 只收用户可见的交付件：临时脚本（.py/.sh/无扩展名…）不进产物清单
+        kind = kind_of(path)
+        if not kind:
+            continue
 
         full = _pick(obj, _FULL_KEYS) or _pick(args, ("full_path",))
         text = body or _pick(obj, _TEXT_KEYS)
@@ -185,11 +206,11 @@ def extract_artifacts(tool_calls) -> ArtifactSet:
                 text, note = back, "正文由同名写入调用回填"
             else:
                 note = "仅确认产物存在，正文不可抽取"
-        if kind_of(path) == "image":
+        if kind == "image":
             note = (note + "；图像为二进制产物，正文不可抽取").lstrip("；")
 
         items.append(Artifact(
-            kind=kind_of(path) or "other",
+            kind=kind,
             rel_path=path, full_path=full, text=text,
             source_tool=name, note=note,
         ))
@@ -226,10 +247,11 @@ def _artifacts_from_commands(tool_calls, existing: list) -> list:
     可真实交付物就躺在工作区里。脚本/命令正文通常会明写输出路径，
     这里把它捞出来。
 
-    两条护栏，避免把「只是被读过的文件」算成产物：
+    两条护栏，避免把「不该算的」算成产物：
       1) 只扫执行类工具与产出型工具的**参数**（不做全工具扫描，read_file 之类不参与）；
-      2) 路径必须**真实存在**才记录（存在性校验），并在 note 里写明来源，
-         让界面能如实标注「按脚本/命令里的路径识别」，而不是假装是工具申报的产物。
+      2) 路径必须**真实存在**、且扩展名在 `EXT_KINDS` 白名单内（用户可见交付件）；
+         note 里写明来源，让界面能如实标注「按脚本/命令里的路径识别」，
+         而不是假装是工具申报的产物。
     """
     known = {(a.rel_path or a.full_path).lower() for a in existing}
     out: list = []
@@ -249,13 +271,16 @@ def _artifacts_from_commands(tool_calls, existing: list) -> list:
             if low in seen or low in known:
                 continue
             seen.add(low)
+            kind = kind_of(p)
+            if not kind:            # 白名单外（脚本、中间文件…）不是给用户看的东西
+                continue
             try:
                 if not Path(p).is_file():
                     continue
             except (OSError, ValueError, RuntimeError):
                 continue
             out.append(Artifact(
-                kind=kind_of(p) or "other",
+                kind=kind,
                 rel_path=p, full_path=p, text="",
                 source_tool=name,
                 note="按脚本/命令里出现的输出路径识别（文件确实存在）",

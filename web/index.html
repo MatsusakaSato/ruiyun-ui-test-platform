@@ -1885,8 +1885,8 @@ function artifactStep(a){
   const raw=String(a.abs_path||a.path||'');
   const name=raw?raw.replace(/\\/g,'/').split('/').pop():'';
   const label=name||a.kind||'(未命名产物)';
-  const kind=(a.kind&&a.kind!=='other')
-    ? `<span class="tag">${esc(a.kind)}</span>` : '';
+  // 类型标签：产物只收用户可见的交付件（后端白名单过滤），这里给个类型角标即可
+  const kind=a.kind?`<span class="tag">${esc(a.kind)}</span>`:'';
   if(a.abs_path){
     return `<div class="step artifact"><span class="dot"></span>
       <div class="step-head">
