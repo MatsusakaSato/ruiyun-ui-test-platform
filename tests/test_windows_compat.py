@@ -71,30 +71,44 @@ class TestWindowsCompatibility(unittest.TestCase):
         self.assertIn("agent_config", desc)
 
     def test_reveal_in_folder_windows_command(self):
-        """验证 Windows 下文件与目录调用 explorer 的命令格式差异与反斜杠处理。"""
+        """验证 Windows 下文件与目录调用 explorer 的命令格式差异与反斜杠处理。
+
+        命令格式是实测结论：`/select,` 与路径必须**拆成两个参数**。连写成
+        f"/select,{path}" 时本机实测新窗口落在「文档」（Shell.Application 读到
+        file:///C:/Users/<用户>/Documents），即打开位置完全错 —— 这条断言就是
+        防止有人「顺手把参数合并回去」。
+
+        启动走 subprocess.Popen（不是 run），且 explorer 之后还要等窗口出现并
+        前台化，所以这里对两者都打桩，只关心命令本身。
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             test_file = Path(tmpdir) / "sample.txt"
             test_file.write_text("hello", encoding="utf-8")
-            
+
             with patch("server.sys.platform", "win32"):
                 # 1) 测试文件高亮定位命令
-                with patch("server.subprocess.run") as mock_run:
+                with patch("server.subprocess.Popen") as mock_popen, \
+                     patch("server._focus_explorer_window"):
+                    mock_popen.return_value.wait.return_value = 0
                     ok, res_path = reveal_in_folder(str(test_file))
                     self.assertTrue(ok)
-                    mock_run.assert_called_once()
-                    cmd = mock_run.call_args[0][0]
+                    mock_popen.assert_called_once()
+                    cmd = mock_popen.call_args[0][0]
                     self.assertEqual(cmd[0], "explorer")
-                    self.assertTrue(cmd[1].startswith("/select,"))
-                    target_arg = cmd[1].split("/select,", 1)[1]
-                    self.assertNotIn("/", target_arg) # 目标路径部分应该全为反斜杠
+                    self.assertEqual(cmd[1], "/select,")   # 必须独立成参数
+                    target_arg = cmd[2]
+                    self.assertNotIn("/", target_arg)      # 目标路径全为反斜杠
 
                 # 2) 测试目录直接进入浏览命令
-                with patch("server.subprocess.run") as mock_run:
+                with patch("server.subprocess.Popen") as mock_popen, \
+                     patch("server._focus_explorer_window"):
+                    mock_popen.return_value.wait.return_value = 0
                     ok, res_path = reveal_in_folder(str(tmpdir))
                     self.assertTrue(ok)
-                    mock_run.assert_called_once()
-                    cmd = mock_run.call_args[0][0]
+                    mock_popen.assert_called_once()
+                    cmd = mock_popen.call_args[0][0]
                     self.assertEqual(cmd[0], "explorer")
+                    self.assertEqual(len(cmd), 2)          # 目录：只有路径
                     self.assertFalse(cmd[1].startswith("/select,"))
                     self.assertNotIn("/", cmd[1])
 

@@ -720,16 +720,11 @@ def reveal_in_finder(target: str) -> tuple[bool, str]:
         path_arg = str(parent)
     try:
         if sys.platform == "win32":
-            # Windows 资源管理器的三个坑（都会让「在文件夹中显示」静默失效）：
-            #   1) /select 与路径必须**连写**成 /select,C:\path\to\file，
-            #      拆成两个参数时 explorer 只当普通参数、不选中；
-            #   2) 路径统一规范化为反斜杠（前端可能传来正斜杠）；
-            #   3) 目录本来就该直接打开，不该在父目录里高亮它自己。
-            # 另外 explorer 成功时也常返回退出码 1，因此不能用 check=True。
             win_path = os.path.normpath(path_arg).replace("/", "\\")
-            cmd = (["explorer", f"/select,{win_path}"] if p.is_file()
+            cmd = (["explorer", "/select,", win_path] if p.is_file()
                    else ["explorer", win_path])
-            subprocess.run(cmd, capture_output=True, timeout=10)
+            _spawn_explorer(cmd)
+            _focus_explorer_window(win_path)
         else:
             subprocess.run(["open", "-R", path_arg], check=True,
                            capture_output=True, timeout=10)
@@ -739,6 +734,164 @@ def reveal_in_finder(target: str) -> tuple[bool, str]:
         return False, f"open -R 执行失败：{msg or exc}"
     except Exception as exc:
         return False, f"{type(exc).__name__}: {exc}"
+
+
+# ---------------------------------------------------------------- Windows 资源管理器
+# 这一块全是实测结论（Win11，2026-09 在本机逐条验证），不是照抄文档。
+#
+# 1）参数必须**拆成两个**：["explorer", "/select,", r"C:\path\x.exe"]。
+#    写成连写的 f"/select,{path}" 时，本机实测新窗口落在「文档」
+#    （Shell.Application 读到 file:///C:/Users/<用户>/Documents），
+#    即路径位置完全错；拆开后落在 file:///C:/Program%20Files/srtclaw（正确）。
+#    原因：非 ASCII 路径（睿云智能工作台.exe）下 explorer 的命令行解析把
+#    /select,PATH 当成了它认不出的开关，于是退回默认的「此电脑/文档」。
+# 2）explorer 把活交给已运行的实例后就退出了，所以**退出码没有意义**
+#    （成功也常返回 1），不能用 check=True。
+# 3）新窗口不会自动来到前台：实测 5 秒后仍不是前台窗口，只在任务栏闪。
+#    所以这里自己等它出现并把它提到前台。
+# 4）用 subprocess 直接建进程（而不是经 shell），可拿到真实 pid，
+#    再按 pid 精确找出它开的那个窗口 —— 不猜、不误抓其它已开的资源管理器。
+
+_EXPLORER_OPEN_TIMEOUT_S = 2.5      # 等 explorer 进程退出（它只是转交请求）
+_EXPLORER_WINDOW_TIMEOUT_S = 8.0    # 等新窗口出现
+_EXPLORER_SETTLE_S = 0.45           # 显示后再让资源管理器自己完成选中/滚动
+
+
+def _spawn_explorer(cmd: list) -> None:
+    """拉起 explorer 并等它退出（它的作用是「把请求交给现有实例」）。"""
+    kwargs = {}
+    if sys.platform == "win32":
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL, **kwargs)
+    try:
+        proc.wait(timeout=_EXPLORER_OPEN_TIMEOUT_S)
+    except Exception:
+        pass
+
+
+if sys.platform == "win32":
+    import ctypes
+    from ctypes import wintypes
+
+    _user32 = ctypes.windll.user32
+    _EnumWindowsProc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND,
+                                          wintypes.LPARAM)
+
+    def _explorer_windows(pid: int = 0) -> list:
+        """(hwnd, 标题, 前台标志, pid) 列表；pid=0 时返回全部资源管理器窗口。
+
+        CabinetWClass 是资源管理器主窗口的窗口类，比按标题匹配可靠得多
+        （标题会随「显示扩展名 / 文件夹选项 / 系统语言」变化，实测同一个
+        exe 所在目录的窗口标题可能显示成「文档」）。
+        """
+        out: list = []
+
+        def _cb(hwnd, _lparam):
+            cls = ctypes.create_unicode_buffer(256)
+            _user32.GetClassNameW(hwnd, cls, 256)
+            if cls.value != "CabinetWClass":
+                return True
+            wpid = wintypes.DWORD()
+            _user32.GetWindowThreadProcessId(hwnd, ctypes.byref(wpid))
+            if pid and wpid.value != pid:
+                return True
+            n = _user32.GetWindowTextLengthW(hwnd)
+            buf = ctypes.create_unicode_buffer(n + 1)
+            _user32.GetWindowTextW(hwnd, buf, n + 1)
+            out.append((int(hwnd), buf.value, hwnd == _user32.GetForegroundWindow(),
+                        int(wpid.value)))
+            return True
+
+        _user32.EnumWindows(_EnumWindowsProc(_cb), 0)
+        return out
+
+    def _focus_window(hwnd: int) -> bool:
+        """把窗口**真的**摆到用户面前。
+
+        为什么不能只调 SetForegroundWindow：Windows 有前台锁定，
+        实测本机 ForegroundLockTimeout=0x30d40（200 秒），裸调用必然返回 False，
+        窗口只在任务栏闪一下 —— 这正是「资源管理器在底部偷偷出现」的原因。
+        实测有效的手段（两种都验过）：
+          A) AttachThreadInput：把本线程附到「当前前台窗口线程」和「目标窗口线程」，
+             让系统认为调用方有权切前台，再 SetForegroundWindow + SetFocus；
+          B) 最小化再还原：SW_MINIMIZE → SW_RESTORE 后 SetForegroundWindow 成功。
+        A 更干净（不留动画），失败时用 B 兜底，最后再退回「闪任务栏按钮」
+        以保证用户至少能看见是哪个窗口。
+        """
+        SW_RESTORE, SW_MINIMIZE, SW_SHOW = 9, 6, 5
+        is_fg = _user32.GetForegroundWindow() == hwnd
+        if _user32.IsIconic(hwnd):
+            _user32.ShowWindow(hwnd, SW_RESTORE)
+        else:
+            _user32.ShowWindow(hwnd, SW_SHOW)
+
+        if not is_fg:
+            fg = _user32.GetForegroundWindow()
+            fg_thread = _user32.GetWindowThreadProcessId(fg, None)
+            target_thread = _user32.GetWindowThreadProcessId(hwnd, None)
+            cur_thread = ctypes.windll.kernel32.GetCurrentThreadId()
+            # 参数类型要显式声明：GetWindowThreadProcessId 返回 DWORD，
+            # 不声明时 ctypes 默认按 int 处理，64 位下会截断线程 id。
+            _user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+            _user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND,
+                                                         ctypes.POINTER(wintypes.DWORD)]
+            attached = False
+            try:
+                attached = bool(_user32.AttachThreadInput(cur_thread, fg_thread, True))
+                _user32.AttachThreadInput(cur_thread, target_thread, True)
+                _user32.BringWindowToTop(hwnd)
+                _user32.SetForegroundWindow(hwnd)
+                _user32.SetFocus(hwnd)
+            except Exception:
+                pass
+            finally:
+                if attached:
+                    _user32.AttachThreadInput(cur_thread, fg_thread, False)
+                    _user32.AttachThreadInput(cur_thread, target_thread, False)
+
+        if _user32.GetForegroundWindow() == hwnd:
+            return True
+
+        # 兜底：最小化→还原（实测同样能拿到前台），再不行就闪任务栏按钮
+        _user32.ShowWindow(hwnd, SW_MINIMIZE)
+        time.sleep(0.25)
+        _user32.ShowWindow(hwnd, SW_RESTORE)
+        _user32.SetForegroundWindow(hwnd)
+        if _user32.GetForegroundWindow() == hwnd:
+            return True
+        _user32.FlashWindow(hwnd, True)
+        return False
+
+    def _focus_explorer_window(win_path: str) -> bool:
+        """等 explorer 开好窗口并把它摆到用户面前（选中完成后再显示，避免闪一下）。"""
+        before = {h for h, _t, _f, _p in _explorer_windows()}
+        deadline = time.time() + _EXPLORER_WINDOW_TIMEOUT_S
+        hwnd = 0
+        while time.time() < deadline:
+            for h, _t, _f, _p in _explorer_windows():
+                if h not in before:
+                    hwnd = h
+                    break
+            if hwnd:
+                break
+            time.sleep(0.2)
+        if not hwnd:
+            # 没有新窗口：explorer 复用了已有窗口（并在其中完成了选中），
+            # 此时至少把标题等于目标目录名的那个窗口提到前台。
+            want = os.path.basename(win_path.rstrip("\\")) or win_path
+            for h, t, _f, _p in _explorer_windows():
+                if t and t.lower() == want.lower():
+                    hwnd = h
+                    break
+        if not hwnd:
+            return False
+        time.sleep(_EXPLORER_SETTLE_S)              # 让资源管理器先完成选中/滚动
+        return _focus_window(hwnd)
+
+else:                                               # pragma: no cover - 仅非 Windows
+    def _focus_explorer_window(win_path: str) -> bool:
+        return False
 
 
 # 跨平台语义别名：Windows 下对应资源管理器，macOS 下对应访达。
