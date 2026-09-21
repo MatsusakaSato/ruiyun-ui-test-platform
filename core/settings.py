@@ -27,6 +27,22 @@ _ROOT = Path(__file__).resolve().parent.parent
 import sys
 import os
 
+
+def _first_existing(cands: list, fallback: str) -> str:
+    """取第一个真实存在的候选路径；都不存在时回退首选。
+
+    同一个应用在不同打包方式下的落盘位置不同（每用户安装 / 每机器安装、
+    漫游目录 / 用户主目录点目录），静态写死任一个都会在另一类机器上失效。
+    """
+    for c in cands:
+        try:
+            if c and os.path.exists(c):
+                return c
+        except OSError:
+            continue
+    return fallback
+
+
 if sys.platform == "win32":
     # Windows 安装位置：C:\Program Files\srtclaw\睿云智能工作台.exe
     # 用 %ProgramFiles% 而非写死 "C:\Program Files"：系统盘/语言不同的机器上
@@ -34,8 +50,16 @@ if sys.platform == "win32":
     DEFAULT_APP_BINARY = os.path.join(
         os.environ.get("ProgramFiles") or r"C:\Program Files",
         "srtclaw", "睿云智能工作台.exe")
+    # agent 运行期配置（死循环判定的 max_iterations 基线）：
+    # 新版走 %APPDATA%\srtclaw\，旧版/开发机走用户主目录点目录，按存在性探测。
+    _roam = (os.environ.get("APPDATA") or os.environ.get("USERPROFILE")
+             or r"C:\Users\Default\AppData\Roaming")
+    _agent_cands = [os.path.join(_roam, "srtclaw", "config", "config.yaml"),
+                    os.path.join(str(Path.home()), ".srtclaw", "config", "config.yaml")]
+    DEFAULT_AGENT_CONFIG = _first_existing(_agent_cands, _agent_cands[0])
 else:
     DEFAULT_APP_BINARY = "/Applications/睿云智能工作台.app/Contents/MacOS/睿云智能工作台"
+    DEFAULT_AGENT_CONFIG = "~/.srtclaw/config/config.yaml"
 DEFAULT_SESSION_ROOT = "~/.srtclaw/workspace/session"
 
 # 项目内置配置模版：全新环境（工作区里还没有 config.yaml）时按它初始化，
@@ -112,11 +136,14 @@ def _clean(v) -> str:
 
 
 def effective_config(cfg: dict) -> dict:
-    """按三层优先级补全 app.binary 与 paths.session_root / workspace_root。
+    """按三层优先级补全 app.binary 与 paths.session_root / workspace_root / agent_config。
 
     * app.binary：覆盖 > config > 内置默认
     * paths.session_root：覆盖 > config > 内置默认
     * paths.workspace_root：覆盖(config) > session_root 的父目录（派生默认）
+    * paths.agent_config：覆盖(config) > 本机默认；Windows 上若配置里留的是
+      macOS 绝对路径（/Users/...）则视为「这份 config 是从 mac 机器带过来的」，
+      同样回退本机默认 —— 否则死循环判定的 max_iterations 基线永远是 0。
     全部做 expanduser（支持 ~ 与相对工作区的写法）。返回深拷贝，不改入参。
     """
     cfg = copy.deepcopy(cfg or {})
@@ -134,6 +161,14 @@ def effective_config(cfg: dict) -> dict:
 
     wr = _clean(paths.get("workspace_root"))
     paths["workspace_root"] = str(Path(wr).expanduser()) if wr else str(sr.parent)
+
+    agent_cfg = _clean(paths.get("agent_config"))
+    # Windows：若配置里留的是 macOS 绝对路径（同一份 config 从 mac 机器带过来），
+    # 视为无效值一并回退本机默认 —— 否则 max_iterations 基线读不到，
+    # 死循环判定就失去了比对基准。
+    if sys.platform == "win32" and agent_cfg.startswith("/"):
+        agent_cfg = ""
+    paths["agent_config"] = str(Path(agent_cfg or DEFAULT_AGENT_CONFIG).expanduser())
     return cfg
 
 
@@ -276,6 +311,7 @@ def describe(cfg: dict) -> dict:
 
     binary = str(app.get("binary") or "")
     sr = str(paths.get("session_root") or "")
+    agent_cfg = str(paths.get("agent_config") or "")
     return {
         "platform": sys.platform,
         "is_windows": sys.platform == "win32",
@@ -293,6 +329,12 @@ def describe(cfg: dict) -> dict:
             "value": sr,
             "source": _source(ov.get("session_root"), raw_paths.get("session_root")),
             "exists": Path(sr).is_dir() if sr else False,
+        },
+        # agent 运行期配置：只读展示（界面无此项输入框），用于核对
+        # 「死循环判定读到的 max_iterations 基线是从哪来的」
+        "agent_config": {
+            "value": agent_cfg,
+            "exists": Path(agent_cfg).is_file() if agent_cfg else False,
         },
         "workspace_root": {"value": str(paths.get("workspace_root") or "")},
         # 用户工作区（非功能性数据：预设用例 / 附件库）；config.yaml 无此配置项，

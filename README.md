@@ -26,24 +26,35 @@
 - **`run_repro.py`**：重现特定测试步骤或用例的入口，便于在出现 Bug 时快速复现。
 - **`server.py`**：平台内建 Web 服务端，用于运行和托管 Web 可视化控制台。
 - **`discover_ui.py`**：DOM 提取探针工具，用于导出并分析应用当前的 UI 结构。
-- **`start_platform.command` / `launch_app_dev.sh`**：快速启动工作台/测试平台服务的快捷脚本。
+- **`start_platform.command` / `start_platform.bat` / `start_platform.ps1`**：双击一键启动测试平台服务并自动打开浏览器（分别适配 macOS、Windows CMD 与 PowerShell）。
+- **`launch_app_dev.sh` / `launch_app_dev.ps1`**：以开发环境参数拉起被测应用的快捷脚本。
 
 ## 快速开始
 
 1. **环境准备**
    请确保您已经安装了对应的 Python 依赖，建议在虚拟环境中运行：
-   ```bash
-   pip install -r requirements.txt
-   ```
+   - **macOS / Linux**:
+     ```bash
+     python3 -m venv .venv && source .venv/bin/activate
+     pip install -r requirements.txt
+     ```
+   - **Windows**:
+     ```cmd
+     python -m venv .venv
+     .venv\Scripts\pip install -r requirements.txt
+     ```
 
-2. **运行全链路测试**
+2. **启动测试平台可视化控制台**
+   - **Windows 用户**：直接双击运行 `start_platform.bat`（或在 PowerShell 中执行 `.\start_platform.ps1`）。
+   - **macOS 用户**：直接双击运行 `start_platform.command`。
+   - **命令行通用启动**：
+     ```bash
+     python server.py --port 8765
+     ```
+   服务就绪后，浏览器访问 `http://127.0.0.1:8765` 即可进入可视化测试平台。
+
+3. **运行全链路测试（命令行方式）**
    ```bash
    python run_pipeline.py
    ```
-   首次运行时，用户工作区（macOS `~/.ruiyun-autotest/`、Windows `%USERPROFILE%\.ruiyun-autotest\`）会自动按仓库根的 `config.template.yaml` 初始化出 `config.yaml`：里面有环境档案、断言阈值等全部可调项。被测应用路径无需手动填写 —— 留空即用本机内置默认（macOS `/Applications/睿云智能工作台.app/Contents/MacOS/睿云智能工作台`，Windows `C:\Program Files\srtclaw\睿云智能工作台.exe`），也可在控制台「⚙ 设置 → 应用与工作区」中改。
-
-3. **启动测试平台控制台**
-   您可以直接运行 `start_platform.command`（Mac）/ `start_platform.bat`（Windows），或者启动服务端以在浏览器中查看可视化测试结果：
-   ```bash
-   python server.py
-   ```
+   首次运行时，用户工作区（macOS `~/.ruiyun-autotest/`、Windows `%USERPROFILE%\.ruiyun-autotest\`）会自动按仓库根的 `config.template.yaml` 初始化出 `config.yaml`：环境档案、断言阈值等可调项都在里面。被测应用路径无需手动填写 —— 留空即用本机内置默认（macOS `/Applications/睿云智能工作台.app/Contents/MacOS/睿云智能工作台`，Windows `C:\Program Files\srtclaw\睿云智能工作台.exe`），也可在控制台「⚙ 设置 → 应用与工作区」中修改。

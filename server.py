@@ -741,6 +741,11 @@ def reveal_in_finder(target: str) -> tuple[bool, str]:
         return False, f"{type(exc).__name__}: {exc}"
 
 
+# 跨平台语义别名：Windows 下对应资源管理器，macOS 下对应访达。
+# 保留原名（历史调用点 / 前端文案里的 reveal 都是它），另给一个中性名便于新代码。
+reveal_in_folder = reveal_in_finder
+
+
 def delete_round(run_id: str) -> tuple[bool, str]:
     """删除一个轮次归档目录（工作区 rounds/<run_id>/）。
 
@@ -1212,7 +1217,15 @@ class Handler(BaseHTTPRequestHandler):
                 body = {}
             try:
                 target = Path(str(body.get("path") or "")).resolve()
-                target.relative_to(uploads_dir().resolve())
+                base_dir = uploads_dir().resolve()
+                if sys.platform == "win32":
+                    # Windows 路径大小写不敏感：Path.relative_to 在这类同目录
+                    # 但盘符/大小写写法不同的路径上会误判为「不在库内」，
+                    # 统一小写后按前缀判断（仍是目录级前缀，不是裸 startswith）。
+                    if not str(target).lower().startswith(str(base_dir).lower() + os.sep):
+                        raise ValueError(str(target))
+                else:
+                    target.relative_to(base_dir)
             except (ValueError, OSError):
                 self._json({"ok": False, "message": "只允许删除附件库内的文件"}, 400)
                 return

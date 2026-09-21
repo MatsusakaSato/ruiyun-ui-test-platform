@@ -35,6 +35,8 @@ workspace/
 .codebuddy/
 .playwright-cli/
 .vscode/
+# Playwright CLI 页面快照（工具自动生成）
+env.yaml
 
 # ---------- 系统 ----------
 .DS_Store

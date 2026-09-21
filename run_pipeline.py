@@ -64,11 +64,60 @@ def _events_for_session(events: list, sess, t_send: float) -> list:
             and _ev_ts(e) >= t_send - 1]
 
 
+def _read_exe_version_windows(binary: Path) -> tuple:
+    """从 PE 版本资源读取版本号与产品名（Windows，纯 ctypes 标准库实现）。
+
+    Electron 打包（electron-builder NSIS）默认写入 FileVersion / ProductName
+    资源；读不到任何一项时返回空串，不阻塞流程（与 macOS 分支口径一致）。
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    ver = ctypes.WinDLL("version")
+    ver.GetFileVersionInfoSizeW.argtypes = [wintypes.LPCWSTR,
+                                            ctypes.POINTER(wintypes.DWORD)]
+    ver.GetFileVersionInfoW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD,
+                                        wintypes.DWORD, wintypes.LPVOID]
+    ver.VerQueryValueW.argtypes = [wintypes.LPCVOID, wintypes.LPCWSTR,
+                                   ctypes.POINTER(wintypes.LPVOID),
+                                   ctypes.POINTER(wintypes.UINT)]
+
+    path = str(binary)
+    size = ver.GetFileVersionInfoSizeW(path, None)
+    if not size:
+        return "", ""
+    data = ctypes.create_string_buffer(size)
+    if not ver.GetFileVersionInfoW(path, 0, size, data):
+        return "", ""
+
+    # 1) Translation 表是二进制（语言/代码页 WORD 对），先拿它拼 StringFileInfo 键
+    tbuf, tlen = wintypes.LPVOID(), wintypes.UINT()
+    if not ver.VerQueryValueW(ctypes.cast(data, wintypes.LPCVOID),
+                              "\\VarFileInfo\\Translation",
+                              ctypes.byref(tbuf), ctypes.byref(tlen)) or tlen.value < 4:
+        return "", ""
+    words = (wintypes.WORD * (tlen.value // 2)).from_address(tbuf.value)
+    lang_cp = f"{words[0]:04X}{words[1]:04X}"
+
+    # 2) 按「语言+代码页」逐项查字符串资源（末尾 NUL 不计入长度）
+    def query_str(name: str) -> str:
+        buf, blen = wintypes.LPVOID(), wintypes.UINT()
+        if not ver.VerQueryValueW(ctypes.cast(data, wintypes.LPCVOID),
+                                  f"\\StringFileInfo\\{lang_cp}\\{name}",
+                                  ctypes.byref(buf), ctypes.byref(blen)) or blen.value <= 1:
+            return ""
+        return ctypes.wstring_at(buf.value, blen.value - 1)
+
+    return query_str("FileVersion") or query_str("ProductVersion"), query_str("ProductName")
+
+
 def read_app_version(cfg: dict) -> tuple:
-    """从 Info.plist 读取版本号。"""
+    """读取被测应用版本号：Windows 读 exe 版本资源，macOS 读 Info.plist。"""
     binary = Path(cfg["app"]["binary"])
-    plist = binary.parent.parent / "Info.plist"
     try:
+        if sys.platform == "win32":
+            return _read_exe_version_windows(binary)
+        plist = binary.parent.parent / "Info.plist"
         with plist.open("rb") as f:
             info = plistlib.load(f)
         return info.get("CFBundleShortVersionString", ""), info.get("CFBundleIdentifier", "")
