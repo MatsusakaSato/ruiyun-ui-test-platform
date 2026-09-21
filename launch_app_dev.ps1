@@ -1,8 +1,18 @@
-param (
+﻿param (
     [string]$Mode = "run"
 )
 
-$APP_BIN = if ($env:LOCALAPPDATA) { "$env:LOCALAPPDATA\Programs\睿云智能工作台\睿云智能工作台.exe" } else { "C:\Program Files\睿云智能工作台\睿云智能工作台.exe" }
+# 被测应用可执行文件：Windows 默认装在 C:\Program Files\srtclaw\睿云智能工作台.exe
+# （用 %ProgramFiles% 而非写死盘符，系统盘/语言不同的机器上它才是权威值）。
+# 可用环境变量 APP_BIN 覆盖；该默认路径不存在时退回旧的每用户安装位置，
+# 保证老环境不被写死的默认值卡死。
+$PF = if ($env:ProgramFiles) { $env:ProgramFiles } else { "C:\Program Files" }
+$APP_BIN_DEFAULT = "$PF\srtclaw\睿云智能工作台.exe"
+$APP_BIN_LEGACY = if ($env:LOCALAPPDATA) { "$env:LOCALAPPDATA\Programs\睿云智能工作台\睿云智能工作台.exe" } else { "" }
+$APP_BIN = if ($env:APP_BIN) { $env:APP_BIN }
+           elseif (Test-Path $APP_BIN_DEFAULT) { $APP_BIN_DEFAULT }
+           elseif ($APP_BIN_LEGACY -and (Test-Path $APP_BIN_LEGACY)) { $APP_BIN_LEGACY }
+           else { $APP_BIN_DEFAULT }
 $APP_KILL_PATTERN = "睿云智能工作台.exe"
 $DEBUG_PORT = if ($env:DEBUG_PORT) { $env:DEBUG_PORT } else { "9222" }
 $LOG_FILE = if ($env:LOG_FILE) { $env:LOG_FILE } else { "$PSScriptRoot\logs\srtclaw_app.log" }

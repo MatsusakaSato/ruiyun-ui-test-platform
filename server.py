@@ -42,6 +42,29 @@ MAX_LOG_LINES = 800
 
 CONFIG_PATH = config_path()
 
+
+# ---------------------------------------------------------------- 配置读取
+# 读配置**绝不抛异常**：全新环境（尤其 Windows 首次克隆）里工作区还没有
+# config.yaml，一旦抛 FileNotFoundError，/api/env 会 500，界面「环境」下拉
+# 拿到的是 {"error": ...}，于是渲染成空选择框 —— 没字、点不动。
+# 这里统一走这两个helper：缺失/损坏一律降级为空配置，各项读取处都有内置默认值。
+def _config_text() -> str:
+    """config.yaml 原文；文件缺失或不可读时返回空串。"""
+    try:
+        return config_path().read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _config_dict() -> dict:
+    """config.yaml 解析结果；缺失/损坏时按空配置继续（app.binary 等回退内置默认）。"""
+    try:
+        data = yaml.safe_load(_config_text())
+    except yaml.YAMLError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 # --allow-lan 临时放行局域网访问（默认关）。见 main() 与 _same_origin_ok()。
 ALLOW_LAN = False
 
@@ -117,8 +140,11 @@ def read_env_config() -> dict:
     返回 {current, profiles:[{key,label,desc}], app_running}
     环境在应用【启动时】注入，运行中的实例无法改环境，
     因此前端在应用运行时会把选择器置为只读。
+
+    profiles 为空时前端会显示「未定义任何环境档案」而不是空选择框：
+    界面「环境」下拉的选项**完全**来自这里，列表为空就等于按钮没字、点不动。
     """
-    cfg = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
+    cfg = _config_dict()
     app = cfg.get("app") or {}
     current = str(app.get("env_profile") or "")
     profiles_cfg = app.get("env_profiles") or {}
@@ -143,6 +169,7 @@ def read_env_config() -> dict:
         "current": current,
         "none_label": "不注入（遵循应用内置默认）",
         "profiles": profiles,
+        "config_path": str(CONFIG_PATH),
         "app_running": app_is_running(cfg),
     }
 
@@ -151,23 +178,35 @@ def write_env_profile(profile: str) -> tuple[bool, str]:
     """把选定的环境档案写回 config.yaml 的 app.env_profile。
 
     只改这一行，其余内容保持原样（用文本替换而非 yaml.dump，
-    避免注释与格式被整体重写）。
+    避免注释与格式被整体重写）。config.yaml 缺失时先按内置模版补齐，
+    这样「切换环境」在全新环境里同样是可用的。
     """
-    cfg = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
+    cfg = _config_dict()
     app = cfg.get("app") or {}
     valid = set((app.get("env_profiles") or {}).keys()) | {""}
     key = str(profile or "").strip()
     if key not in valid:
         return False, f"未知环境档案：{key or '(空)'}"
 
-    text = CONFIG_PATH.read_text(encoding="utf-8")
+    path = config_path()          # 缺失时按模版自愈初始化
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return False, f"配置文件不可读：{type(exc).__name__}: {exc}"
+
     new_text, n = re.subn(r"(?m)^(\s*)env_profile:.*$",
                           lambda m: f'{m.group(1)}env_profile: "{key}"',
                           text, count=1)
     if n == 0:
-        return False, "config.yaml 中未找到 env_profile 字段"
+        # 配置里没有 env_profile 行（用户自己精简过配置）：补写在 app: 之下，
+        # 而不是直接失败 —— 否则这类配置下界面上的环境切换永远报错。
+        new_text, n = re.subn(r"(?m)^(app:[ \t]*(?:#.*)?)$",
+                              lambda m: f'{m.group(1)}\n  env_profile: "{key}"',
+                              text, count=1)
+    if n == 0:
+        return False, f"config.yaml 中未找到 app 段，无法写入 env_profile：{path}"
     try:
-        CONFIG_PATH.write_text(new_text, encoding="utf-8")
+        path.write_text(new_text, encoding="utf-8")
     except Exception as exc:
         return False, f"写入失败：{type(exc).__name__}: {exc}"
     return True, key
@@ -178,14 +217,15 @@ def load_cfg() -> dict:
 
     应用路径 / 日志路径相关的消费方（kill_app / 子进程流水线 / 探查脚本）
     一律经由这里取值，保证界面「应用设置」的覆盖项全局生效。
+    配置缺失时按空配置继续：app.binary 会回退到本机内置默认路径。
     """
-    return effective_config(yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {})
+    return effective_config(_config_dict())
 
 
 def app_is_running(cfg: dict | None = None) -> bool:
     """应用是否在运行：以调试端口是否响应为准（与驱动 is_up 同口径）。"""
     try:
-        cfg = cfg or (yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {})
+        cfg = cfg if cfg is not None else _config_dict()
         port = int((cfg.get("app") or {}).get("debug_port") or 9222)
     except Exception:
         port = 9222
@@ -291,16 +331,21 @@ class RunState:
                 # 避免宿主环境回收进程树时把正在运行的测试连带杀掉（与应用启动同策略）。
                 # stdin=DEVNULL：服务以独立进程组启动后继承的 stdin 是坏 fd，
                 # 子进程会因 init_sys_streams Bad file descriptor 起不来。
+                # 编码两端显式约定 UTF-8：Windows 管道默认走本地 ANSI 代码页
+                # （中文系统为 GBK），子进程的中文输出会被解成乱码 ——
+                # 父端按 UTF-8 读，并用 PYTHONIOENCODING 让子进程按 UTF-8 写。
                 kwargs = {}
                 if sys.platform == "win32":
                     kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | 0x00000008  # DETACHED_PROCESS
                 else:
                     kwargs["start_new_session"] = True
+                env = dict(os.environ)
+                env["PYTHONIOENCODING"] = "utf-8"
 
                 self.proc = subprocess.Popen(
                     cmd, cwd=str(ROOT), stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT, text=True, bufsize=1,
-                    stdin=subprocess.DEVNULL, **kwargs
+                    stderr=subprocess.STDOUT, encoding="utf-8", errors="replace",
+                    bufsize=1, stdin=subprocess.DEVNULL, env=env, **kwargs
                 )
             except Exception as exc:
                 return False, f"启动失败: {exc}"
@@ -653,13 +698,15 @@ def delete_preset_cases(ids) -> tuple[bool, str, int]:
 
 
 def reveal_in_finder(target: str) -> tuple[bool, str]:
-    """在 Finder 中定位目标文件/目录（macOS）。
+    """在文件管理器中定位目标文件/目录（macOS 访达 / Windows 资源管理器）。
 
     为什么需要后端代劳：浏览器禁止 http:// 页面跳转到 file://
     （Not allowed to load local resource），因此无法从前端直接打开本机文件。
-    这里由本地服务调用 `open -R`，交给 Finder 选中并弹窗。
+    这里由本地服务代劳：
+      * macOS  → `open -R`，交给访达选中并弹窗
+      * Windows→ `explorer /select,"<path>"`，打开资源管理器并选中
 
-    open -R 需要文件已存在；不存在则退回打开其父目录。
+    目标不存在则退回打开其父目录。
     """
     p = Path(target).expanduser()
     if p.is_file():
@@ -673,8 +720,16 @@ def reveal_in_finder(target: str) -> tuple[bool, str]:
         path_arg = str(parent)
     try:
         if sys.platform == "win32":
-            subprocess.run(["explorer", "/select,", path_arg], check=True,
-                           capture_output=True, timeout=10)
+            # Windows 资源管理器的三个坑（都会让「在文件夹中显示」静默失效）：
+            #   1) /select 与路径必须**连写**成 /select,C:\path\to\file，
+            #      拆成两个参数时 explorer 只当普通参数、不选中；
+            #   2) 路径统一规范化为反斜杠（前端可能传来正斜杠）；
+            #   3) 目录本来就该直接打开，不该在父目录里高亮它自己。
+            # 另外 explorer 成功时也常返回退出码 1，因此不能用 check=True。
+            win_path = os.path.normpath(path_arg).replace("/", "\\")
+            cmd = (["explorer", f"/select,{win_path}"] if p.is_file()
+                   else ["explorer", win_path])
+            subprocess.run(cmd, capture_output=True, timeout=10)
         else:
             subprocess.run(["open", "-R", path_arg], check=True,
                            capture_output=True, timeout=10)
@@ -836,9 +891,9 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/config":
             try:
-                cfg = yaml.safe_load(config_path().read_text(encoding="utf-8"))
+                cfg = _config_dict()
                 self._json({
-                    "app_name": (cfg.get("app") or {}).get("name", ""),
+                    "app_name": (cfg.get("app") or {}).get("name", "") or "睿云智能工作台",
                     "case_timeout_s": cfg.get("case_timeout_s", 1200),
                     "preset_count": len(preset_cases()),
                 })
@@ -866,7 +921,7 @@ class Handler(BaseHTTPRequestHandler):
         # 应用设置：被测应用路径 / 日志根目录（含来源与存在性，供界面回显）
         if path == "/api/app-settings":
             try:
-                self._json(describe(yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}))
+                self._json(describe(_config_dict()))
             except Exception as exc:
                 self._json({"error": f"{type(exc).__name__}: {exc}"}, 500)
             return
@@ -1036,7 +1091,7 @@ class Handler(BaseHTTPRequestHandler):
             if body.get("reset"):
                 clear_overrides()
                 self._json({"ok": True, "message": "已恢复默认配置",
-                            **describe(yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {})})
+                            **describe(_config_dict())})
                 return
             binary = str(body.get("app_binary") or "").strip()
             session_root = str(body.get("session_root") or "").strip()
@@ -1047,8 +1102,13 @@ class Handler(BaseHTTPRequestHandler):
                     self._json({"ok": False, "message": f"{label}含非法字符"}, 400)
                     return
             if binary and not Path(binary).expanduser().exists():
+                # 提示随平台给：Windows 上引导用户去找 .app/Contents/MacOS 只会让人更迷惑
+                hint = ("请确认路径为可执行文件（Windows 示例："
+                        r"C:\Program Files\srtclaw\睿云智能工作台.exe）"
+                        if sys.platform == "win32"
+                        else "请确认 .app/Contents/MacOS/ 下的可执行文件")
                 self._json({"ok": False,
-                            "message": f"应用路径不存在：{binary}（请确认 .app/Contents/MacOS/ 下的可执行文件）"},
+                            "message": f"应用路径不存在：{binary}（{hint}）"},
                            400)
                 return
             if user_ws and not Path(user_ws).expanduser().parent.is_dir():
@@ -1059,7 +1119,7 @@ class Handler(BaseHTTPRequestHandler):
             save_overrides(binary, session_root, user_ws)
             if user_ws:
                 user_workspace()   # 立即建目录，让「打开工作区」随时可用
-            src = describe(yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {})
+            src = describe(_config_dict())
             self._json({"ok": True, "message": "已保存（下次运行测试时生效）", **src})
             return
 

@@ -28,10 +28,19 @@ import sys
 import os
 
 if sys.platform == "win32":
-    DEFAULT_APP_BINARY = os.path.join(os.environ.get("LOCALAPPDATA", "C:\\"), "Programs", "睿云智能工作台", "睿云智能工作台.exe")
+    # Windows 安装位置：C:\Program Files\srtclaw\睿云智能工作台.exe
+    # 用 %ProgramFiles% 而非写死 "C:\Program Files"：系统盘/语言不同的机器上
+    # 该变量才是权威值；取不到时才回退到英文默认路径。
+    DEFAULT_APP_BINARY = os.path.join(
+        os.environ.get("ProgramFiles") or r"C:\Program Files",
+        "srtclaw", "睿云智能工作台.exe")
 else:
     DEFAULT_APP_BINARY = "/Applications/睿云智能工作台.app/Contents/MacOS/睿云智能工作台"
 DEFAULT_SESSION_ROOT = "~/.srtclaw/workspace/session"
+
+# 项目内置配置模版：全新环境（工作区里还没有 config.yaml）时按它初始化，
+# 否则「环境」下拉、断言阈值等依赖配置的功能会整片失效（见 config_path）。
+TEMPLATE_CONFIG = _ROOT / "config.template.yaml"
 
 # 界面覆盖文件：与 .llm_secrets.json 同模式（0600、gitignore）
 SETTINGS_FILE = _ROOT / ".app_settings.json"
@@ -208,11 +217,23 @@ def rounds_dir() -> Path:
 
 
 def config_path() -> Path:
-    """平台配置文件：工作区/config.yaml（历史位置自动迁移）。"""
+    """平台配置文件：工作区/config.yaml（历史位置自动迁移，缺失时按模版自愈初始化）。
+
+    全新克隆的机器上工作区里没有任何文件，config.yaml 自然也不存在。
+    此时若返回一个不存在的路径，读配置的调用方会直接抛 FileNotFoundError：
+    界面「环境」下拉读到 500 后变成空选择框（没字、点不动），流水线也拿不到
+    断言阈值。因此这里在「工作区没有、仓库根也没有」时就地按内置模版初始化一份。
+    """
     p = user_workspace() / "config.yaml"
     _migrate_first(_LEGACY_CONFIG, p)
     if str(user_workspace()) != DEFAULT_WORKSPACE:
         _migrate_legacy(Path(DEFAULT_WORKSPACE) / "config.yaml", p)
+    if not p.is_file() and TEMPLATE_CONFIG.is_file():
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(str(TEMPLATE_CONFIG), str(p))
+        except OSError:
+            pass
     return p
 
 
@@ -238,6 +259,11 @@ def describe(cfg: dict) -> dict:
 
     来源判断必须用**合并前**的原始 config 值 —— 若在 effective_config
     之后取，默认值已被填入，所有项都会被误标为 config。
+
+    另外下发 platform / is_windows / defaults：界面输入框的 placeholder 与
+    「留空使用默认」提示必须显示**本机**的默认路径。前端曾把 macOS 的
+    .app/Contents/MacOS/... 写死在 HTML 里，Windows 上即便服务端已经算出
+    C:\Program Files\srtclaw\...，用户看到的仍是 mac 路径。
     """
     cfg = cfg or {}
     ov = load_overrides()
@@ -251,6 +277,13 @@ def describe(cfg: dict) -> dict:
     binary = str(app.get("binary") or "")
     sr = str(paths.get("session_root") or "")
     return {
+        "platform": sys.platform,
+        "is_windows": sys.platform == "win32",
+        # 内置默认（与用户是否覆盖无关）：界面据此提示「留空时用什么」
+        "defaults": {
+            "binary": str(Path(DEFAULT_APP_BINARY).expanduser()),
+            "session_root": str(Path(DEFAULT_SESSION_ROOT).expanduser()),
+        },
         "binary": {
             "value": binary,
             "source": _source(ov.get("app_binary"), raw_app.get("binary")),

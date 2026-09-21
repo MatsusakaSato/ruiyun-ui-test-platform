@@ -460,7 +460,7 @@ tr:last-child td{border-bottom:none}
     </div>
     <span class="q" data-tip="设置二级菜单：
 - 应用与工作区：被测应用路径 / 会话日志目录 / 用户工作区目录，
-  每个路径旁的 📁 按钮可在访达中打开当前生效路径
+  每个路径旁的 📁 按钮可在访达（macOS）/ 资源管理器（Windows）中打开当前生效路径
 - 模型设置：供应商地址与 API Key（用于质量评估）
 工作区内含预设用例、附件库、轮次归档与 config.yaml。">?</span>
   </span>
@@ -666,29 +666,30 @@ tr:last-child td{border-bottom:none}
       <div class="fld">
         <label for="appBinInp">被测应用可执行文件路径（选填）</label>
         <div class="inp-row">
-          <input id="appBinInp" type="text" autocomplete="off" spellcheck="false"
-                 placeholder="/Applications/睿云智能工作台.app/Contents/MacOS/睿云智能工作台"/>
-          <button class="reveal-btn" onclick="revealCfgPath('binary')"
-                  title="在访达中打开当前生效的应用路径">📁</button>
+          <!-- placeholder / 提示由 /api/app-settings 按本机平台回填（见 openAppCfg）：
+               写死 macOS 的 .app/Contents/MacOS/... 会让 Windows 用户以为默认值是错的 -->
+          <input id="appBinInp" type="text" autocomplete="off" spellcheck="false" placeholder=""/>
+          <button class="reveal-btn" id="appBinReveal" onclick="revealCfgPath('binary')"
+                  title="在文件管理器中打开当前生效的应用路径">📁</button>
         </div>
-        <span class="fhint">留空使用默认：/Applications/睿云智能工作台.app/Contents/MacOS/睿云智能工作台</span>
+        <span class="fhint" id="appBinHint">留空使用本机内置默认路径</span>
       </div>
       <div class="fld">
         <label for="appLogInp">会话日志根目录（选填）</label>
         <div class="inp-row">
           <input id="appLogInp" type="text" autocomplete="off" spellcheck="false"
                  placeholder="~/.srtclaw/workspace/session"/>
-          <button class="reveal-btn" onclick="revealCfgPath('session_root')"
-                  title="在访达中打开当前生效的日志目录">📁</button>
+          <button class="reveal-btn" id="appLogReveal" onclick="revealCfgPath('session_root')"
+                  title="在文件管理器中打开当前生效的日志目录">📁</button>
         </div>
-        <span class="fhint">被测应用产生的日志地址（sess_* 会话目录的父目录）。留空使用默认：~/.srtclaw/workspace/session</span>
+        <span class="fhint" id="appLogHint">被测应用产生的日志地址（sess_* 会话目录的父目录）。留空使用本机内置默认路径</span>
       </div>
       <div class="fld">
         <label for="wsInp">用户工作区目录（选填）</label>
         <div class="inp-row">
           <input id="wsInp" type="text" autocomplete="off" spellcheck="false"/>
-          <button class="reveal-btn" onclick="revealCfgPath('workspace')"
-                  title="在访达中打开当前生效的工作区目录">📁</button>
+          <button class="reveal-btn" id="wsReveal" onclick="revealCfgPath('workspace')"
+                  title="在文件管理器中打开当前生效的工作区目录">📁</button>
         </div>
         <span class="fhint">非功能性数据（预设用例 testcases.yaml、附件库 uploads/、轮次归档 rounds/、config.yaml）的存放目录。留空使用 ~/.ruiyun-autotest；改动后旧数据自动迁移到新目录</span>
       </div>
@@ -715,24 +716,58 @@ const fmtPct=v=>(v==null?'—':(v*100).toFixed(0)+'%');
 /* 应用运行中 → 环境只读、关闭可用；未运行 → 环境可选、关闭置灰。
    环境变量只在启动时注入，因此运行中切环境无意义，必须禁止。 */
 let ENV_CFG=null;
+/* 环境档案读取失败的原因。非空时选择器置灰并显示原因 ——
+   绝不能把 <select> 留空：空选择框既看不出哪里坏了，也点不动。 */
+let ENV_ERR='';
 
 async function loadEnv(){
+  let j=null;
   try{
-    ENV_CFG = await (await fetch('/api/env')).json();
-  }catch(e){ return; }
+    j=await (await fetch('/api/env')).json();
+  }catch(e){
+    envLoadFailed('无法连接本地服务：'+e.message); return;
+  }
+  // 服务端异常会回 {"error": "..."}，此时没有 profiles —— 必须原样告诉用户
+  if(!j || j.error){ envLoadFailed((j&&j.error)||'服务返回异常'); return; }
+  const list=Array.isArray(j.profiles)?j.profiles:[];
+  if(!list.length){
+    envLoadFailed(`配置里没有可选的环境档案：${j.config_path||'config.yaml'} 的 app.env_profiles 为空`);
+    return;
+  }
+  ENV_ERR='';
+  ENV_CFG=j;
   const sel=$('optEnv');
-  if(!ENV_CFG.profiles){ sel.innerHTML=''; return; }
-  sel.innerHTML = ENV_CFG.profiles.map(p=>
-    `<option value="${esc(p.key)}" title="${esc(p.desc)}">${esc(p.label)}</option>`).join('');
-  if(ENV_CFG.profiles.some(p=>p.key===ENV_CFG.current)) sel.value=ENV_CFG.current;
+  sel.innerHTML = list.map(p=>
+      `<option value="${esc(p.key)}" title="${esc(p.desc)}">${esc(p.label)}</option>`).join('')
+    + (j.none_label
+        ? `<option value="" title="不注入任何环境变量，走应用内置默认">${esc(j.none_label)}</option>`
+        : '');
+  // 当前值不在档案列表里（未配置 / 档案被删）→ 落到「不注入」，而不是
+  // 让浏览器默认选中第一项、把实际状态显示成「开发环境」。
+  // 没有「不注入」项时至少选第一个档案：否则 selectedIndex 会变成 -1，又成了空框。
+  if(list.some(p=>p.key===j.current)) sel.value=j.current;
+  else if(j.none_label) sel.value='';
+  else sel.selectedIndex=0;
+  $('wrapEnv').removeAttribute('title');
+  syncEnvUI();
+}
+
+/* 读不到档案时：留一行可见文字 + 置灰，并把原因挂在悬停提示上 */
+function envLoadFailed(msg){
+  ENV_ERR=msg;
+  ENV_CFG={profiles:[],current:'',none_label:'',app_running:false};
+  const sel=$('optEnv');
+  sel.innerHTML='<option value="">环境档案不可用</option>';
+  sel.value='';
+  $('wrapEnv').title=msg;
   syncEnvUI();
 }
 
 function syncEnvUI(){
   if(!ENV_CFG) return;
   const running = !!ENV_CFG.app_running;
-  $('optEnv').disabled = running;                       // 运行中只读
-  $('wrapEnv').classList.toggle('dimmed', running);
+  $('optEnv').disabled = running || !!ENV_ERR;   // 运行中只读；读取失败也不可点
+  $('wrapEnv').classList.toggle('dimmed', running || !!ENV_ERR);
   // 关闭按钮：有实例可关、且当前没有测试在跑时才可用
   const closable = running && !RUNNING;
   $('btnCloseApp').disabled = !closable;
@@ -756,7 +791,8 @@ $('optEnv').onchange = async ()=>{
     const j=await r.json();
     if(!j.ok){ alert('切换环境失败：'+(j.message||'未知错误')); await loadEnv(); return; }
     ENV_CFG=j; syncEnvUI();
-    const label=((j.profiles||[]).find(p=>p.key===j.current)||{}).label||j.current;
+    const label=((j.profiles||[]).find(p=>p.key===j.current)||{}).label
+                || (j.current ? j.current : (j.none_label||'不注入'));
     alert(`已切换到「${label}」\n\n该设置将在下次启动应用时生效。`);
   }catch(e){ alert('请求失败：'+e.message); await loadEnv(); }
 };
@@ -950,15 +986,34 @@ async function openAppCfg(){
   try{
     const d=await (await fetch('/api/app-settings')).json();
     if(d.error){ appCfgMsg('err','读取失败：'+d.error); return; }
-    APP_CFG_DESC=d;   // 📁 按钮据此打开「当前生效路径」（输入框里的是草稿值）
-    // 输入框只回填「本机自定义」值；默认 / config.yaml 的值放 placeholder 展示
-    $('appBinInp').value=d.binary.source==='local'?d.binary.value:'';
-    $('appBinInp').placeholder=d.binary.value||'(空)';
-    $('appLogInp').value=d.session_root.source==='local'?d.session_root.value:'';
-    $('appLogInp').placeholder=d.session_root.value||'(空)';
-    $('wsInp').value=d.workspace.source==='local'?d.workspace.value:'';
-    $('wsInp').placeholder=d.workspace.value||'(空)';
+    fillAppCfg(d);
   }catch(e){ appCfgMsg('err','请求失败：'+e.message); }
+}
+/* 平台文案：Windows 是「资源管理器」，macOS 是「访达」。
+   服务端随 /api/app-settings 下发 is_windows，取不到时按 UA 兜底
+   （这些字串此前写死为「访达」，在 Windows 上读起来莫名其妙）。 */
+let IS_WIN=/Win/i.test(navigator.userAgent||'');
+const FM_NAME=()=>IS_WIN?'资源管理器':'访达';
+/* 应用设置回填：生效值放 placeholder，只有「本机覆盖」才落进输入框。
+   「留空使用默认」的提示必须显示**本机**默认：macOS 是 .app/Contents/MacOS/...，
+   Windows 是 C:\Program Files\srtclaw\睿云智能工作台.exe ——
+   写死 mac 路径正是「Windows 上仍显示 mac 默认值」的原因。 */
+function fillAppCfg(d){
+  IS_WIN=!!d.is_windows;
+  APP_CFG_DESC=d;   // 📁 按钮据此打开「当前生效路径」（输入框里的是草稿值）
+  $('appBinInp').value=d.binary.source==='local'?d.binary.value:'';
+  $('appBinInp').placeholder=d.binary.value||'(空)';
+  $('appLogInp').value=d.session_root.source==='local'?d.session_root.value:'';
+  $('appLogInp').placeholder=d.session_root.value||'(空)';
+  $('wsInp').value=d.workspace.source==='local'?d.workspace.value:'';
+  $('wsInp').placeholder=d.workspace.value||'(空)';
+  const def=d.defaults||{};
+  $('appBinHint').textContent='留空使用内置默认：'+(def.binary||d.binary.value||'(空)');
+  $('appLogHint').textContent='被测应用产生的日志地址（sess_* 会话目录的父目录）。'
+    +'留空使用内置默认：'+(def.session_root||d.session_root.value||'(空)');
+  ['appBinReveal','appLogReveal','wsReveal'].forEach(id=>{
+    const b=$(id); if(b) b.title=`在${FM_NAME()}中打开当前生效路径`;
+  });
 }
 function closeAppCfg(){ $('appMask').classList.remove('on'); }
 /* ================= 设置二级菜单 ================= */
@@ -1000,13 +1055,7 @@ $('appCfgSave').onclick=async()=>{
     if(!d.ok){
       appCfgMsg('err', d.message||'保存失败');
     }else{
-      $('appBinInp').value=d.binary.source==='local'?d.binary.value:'';
-      $('appBinInp').placeholder=d.binary.value||'(空)';
-      $('appLogInp').value=d.session_root.source==='local'?d.session_root.value:'';
-      $('appLogInp').placeholder=d.session_root.value||'(空)';
-      $('wsInp').value=d.workspace.source==='local'?d.workspace.value:'';
-      $('wsInp').placeholder=d.workspace.value||'(空)';
-      APP_CFG_DESC=d;
+      fillAppCfg(d);
       appCfgMsg('ok','✓ 已保存（下次运行测试生效）');
     }
   }catch(e){
@@ -1022,10 +1071,7 @@ $('appCfgReset').onclick=async()=>{
     const d=await r.json().catch(()=>null);
     if(d&&d.ok){
       $('appBinInp').value=''; $('appLogInp').value=''; $('wsInp').value='';
-      $('appBinInp').placeholder=d.binary.value||'(空)';
-      $('appLogInp').placeholder=d.session_root.value||'(空)';
-      $('wsInp').placeholder=d.workspace.value||'(空)';
-      APP_CFG_DESC=d;
+      fillAppCfg(d);
       appCfgMsg('ok','✓ 已恢复默认配置');
     }
   }catch(e){}
@@ -1042,7 +1088,7 @@ function sessionLink(c, label){
   const p = c.session_log_path;
   if(!p) return `<span class="mono">${esc(txt)}</span>`;
   return `<a class="sess-link mono" href="#" data-path="${esc(p)}"
-             title="在 Finder 中显示会话文件夹：${esc(p)}"
+             title="在${FM_NAME()}中显示会话文件夹：${esc(p)}"
              onclick="revealInFinder(event,this)">${esc(txt)}</a>`;
 }
 
@@ -1516,7 +1562,7 @@ async function loadRounds(){
     return `<div class="round-item ${currentRound===r.run_id?'active':''}" onclick="openRound('${r.run_id}')">
       <div class="rid">${folder
         ?`<a class="rid-link" href="#" data-path="${esc(folder)}"
-            title="在访达中打开该轮次文件夹：${esc(folder)}"
+            title="在${FM_NAME()}中打开该轮次文件夹：${esc(folder)}"
             onclick="event.stopPropagation();revealInFinder(event,this)">${esc(r.run_id)}</a>`
         :esc(r.run_id)}</div>
       <div class="rmeta">
@@ -1933,7 +1979,7 @@ function evProducts(c){
 function evArtBtn(p){
   if(!p) return '';
   const tip='产物：'+p.names.join('、')
-    +(p.ok.length?`\n点击在 Finder 中显示：${p.ok[0].abs}`
+    +(p.ok.length?`\n点击在${FM_NAME()}中显示：${p.ok[0].abs}`
                  :'\n本机未找到产物文件（按工作区解析不到绝对路径）');
   if(!p.ok.length)
     return `<span class="evt-art disabled" title="${esc(tip)}">查看产物</span>`;

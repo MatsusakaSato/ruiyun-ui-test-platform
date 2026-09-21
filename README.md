@@ -40,9 +40,10 @@
    ```bash
    python run_pipeline.py
    ```
+   首次运行时，用户工作区（macOS `~/.ruiyun-autotest/`、Windows `%USERPROFILE%\.ruiyun-autotest\`）会自动按仓库根的 `config.template.yaml` 初始化出 `config.yaml`：里面有环境档案、断言阈值等全部可调项。被测应用路径无需手动填写 —— 留空即用本机内置默认（macOS `/Applications/睿云智能工作台.app/Contents/MacOS/睿云智能工作台`，Windows `C:\Program Files\srtclaw\睿云智能工作台.exe`），也可在控制台「⚙ 设置 → 应用与工作区」中改。
 
 3. **启动测试平台控制台**
-   您可以直接运行 `start_platform.command`（Mac），或者启动服务端以在浏览器中查看可视化测试结果：
+   您可以直接运行 `start_platform.command`（Mac）/ `start_platform.bat`（Windows），或者启动服务端以在浏览器中查看可视化测试结果：
    ```bash
    python server.py
    ```
