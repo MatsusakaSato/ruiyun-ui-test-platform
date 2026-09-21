@@ -235,10 +235,12 @@ def _merge_confirm_events(steps: list, trace, events: list) -> list:
     没有时间字段，因此「插到第 N 次工具调用之后」无法实现。这里以每条 assistant
     消息的 [at, done_at) 为一个响应段：
 
-      · 事件 ts 落入某段 → 追加在该段步骤之后（段内按 ts 升序），条目上带
-        approximate=True 与 anchor（该段起始消息时间），前端据此显示「近似」角标；
+      · 事件 ts 落入某段 → 追加在该段步骤之后（段内按 ts 升序）；
       · 早于首段 → 置于最前；晚于末段 / 无时间戳 / 无段可归 → 追加末尾；
       · 无步骤（会话日志解析失败）时仍然输出事件条目，不静默丢弃。
+
+    返回前由 _clean_confirm_items 剥掉定位用的内部字段：界面只展示
+    「题干 + 点的答案」，不暴露位置精度与归属来源。
     """
     items = []
     for ev in (events or []):
@@ -253,11 +255,12 @@ def _merge_confirm_events(steps: list, trace, events: list) -> list:
             "label": CONFIRM_MODE_LABEL.get(mode, mode or "自动确认"),
             "text": str(ev.get("text") or ""),
             "q": str(ev.get("q") or ""),
-            # 位置精度：日志无步骤级时间，位置一律是消息级近似
-            "approximate": True,
-            # 归属来源：驱动点击时记录了会话 → session；旧事件无 sess → time-window
-            "attribution": "session" if str(ev.get("sess") or "") else "time-window",
+            # 题干原文：详情页展开这条记录时显示「问题是什么」。
+            # 旧轮次的事件没有该字段 → 前端回退为只显示题号。
+            "question": str(ev.get("question") or ""),
+            # anchor/attribution 只供下面的排序使用，_clean_confirm_items 会在返回前剥掉
             "anchor": "",
+            "attribution": "session" if str(ev.get("sess") or "") else "time-window",
         })
     if not items:
         return list(steps or [])
@@ -312,7 +315,20 @@ def _merge_confirm_events(steps: list, trace, events: list) -> list:
         if id(st) not in covered:
             out.append(st)
     out.extend(sorted(tail, key=lambda x: x["ts"]))
-    return out
+    return _clean_confirm_items(out)
+
+
+def _clean_confirm_items(items: list) -> list:
+    """剥掉确认条目里只服务于「定位」的内部字段。
+
+    前端详情页只需要「题干 + 用户点的答案」：ts / anchor / attribution 是实现细节
+    （消息级时间近似、会话归属回退），摆到界面上既看不懂也不关心。
+    """
+    for it in items:
+        if isinstance(it, dict) and it.get("type") == "auto_confirm":
+            for k in ("ts", "anchor", "attribution"):
+                it.pop(k, None)
+    return items
 
 
 def build_case_detail(case: CaseResult, findings_by_step: dict | None = None,
@@ -331,8 +347,8 @@ def build_case_detail(case: CaseResult, findings_by_step: dict | None = None,
             "wait_note": getattr(case, "wait_note", ""),
             "auto_confirms": int(getattr(case, "auto_confirms", 0)),
             # 无轨迹也照样输出自动确认条目：事件本身是事实，不该因解析失败而丢
-            "steps": _merge_confirm_events(
-                [], None, list(getattr(case, "confirm_events", []) or [])),
+            "steps": _clean_confirm_items(_merge_confirm_events(
+                [], None, list(getattr(case, "confirm_events", []) or []))),
             "tools": [], "skills": [], "objective": {},
             # 日志都没解析出来，产物自然抽不到；给空结构而不是省略字段，
             # 免得消费方（界面 / 服务端聚合）要额外判 None

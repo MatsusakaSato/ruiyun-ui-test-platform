@@ -150,8 +150,8 @@ def read_env_config() -> dict:
     profiles_cfg = app.get("env_profiles") or {}
 
     labels = {
-        "dev":        ("开发环境", "注入 dev 域名，连 api-dev.3ren.cn"),
-        "production": ("线上环境", "不注入变量，走应用内置生产域名"),
+        "dev":        ("开发", "注入 dev 域名，连 api-dev.3ren.cn"),
+        "production": ("线上", "不注入变量，走应用内置生产域名"),
     }
     profiles = []
     for key in ("dev", "production"):
@@ -167,7 +167,7 @@ def read_env_config() -> dict:
                          "desc": f"自定义档案（{len(pairs or {})} 个变量）"})
     return {
         "current": current,
-        "none_label": "不注入（遵循应用内置默认）",
+        "none_label": "不注入",
         "profiles": profiles,
         "config_path": str(CONFIG_PATH),
         "app_running": app_is_running(cfg),
@@ -293,7 +293,8 @@ class RunState:
     # ------------------------------------------------ 运行控制
     def start(self, cases: int, repro_times: int, repro_limit: int,
               case_items: list | None = None,
-              max_inflight: int = 0) -> tuple[bool, str]:
+              max_inflight: int = 0,
+              auto_confirm: bool | None = None) -> tuple[bool, str]:
         with self.lock:
             if self.proc and self.proc.poll() is None:
                 return False, "已有测试正在运行，请等待完成"
@@ -325,6 +326,9 @@ class RunState:
                     cmd += ["--repro-limit", str(int(repro_limit))]
             if max_inflight:
                 cmd += ["--max-inflight", str(int(max_inflight))]
+            # 自动点击：界面开关显式传了才下传，未传时子进程沿用 config.yaml
+            if isinstance(auto_confirm, bool):
+                cmd += ["--auto-confirm", "on" if auto_confirm else "off"]
 
             try:
                 # start_new_session：让测试进程独立于服务所在进程组，
@@ -1234,10 +1238,15 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/config":
             try:
                 cfg = _config_dict()
+                eff = effective_config(cfg)
+                app_cfg = eff.get("app") or {}
                 self._json({
-                    "app_name": (cfg.get("app") or {}).get("name", "") or "睿云智能工作台",
-                    "case_timeout_s": cfg.get("case_timeout_s", 1200),
+                    "app_name": app_cfg.get("name", "") or "睿云智能工作台",
+                    "case_timeout_s": eff.get("case_timeout_s", 1200),
                     "preset_count": len(preset_cases()),
+                    # 自动点击的配置默认值：界面开关打开时按它初始化
+                    # （界面只把开关值随本次运行下发，不写回 config.yaml）
+                    "auto_confirm": bool(app_cfg.get("auto_confirm", False)),
                 })
             except Exception as exc:
                 self._json({"error": str(exc)}, 500)
@@ -1359,6 +1368,7 @@ class Handler(BaseHTTPRequestHandler):
                 repro_limit=body.get("repro_limit", 0),
                 case_items=normalize_cases(body.get("case_items")),
                 max_inflight=int(body.get("max_inflight", 0) or 0),
+                auto_confirm=body.get("auto_confirm"),
             )
             self._json({"ok": ok, "run_id": msg if ok else "", "message": msg},
                        200 if ok else 409)

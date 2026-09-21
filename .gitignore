@@ -26,6 +26,8 @@ logs/*.log
 *.log
 # 附件库：用例上传的附件（体积不定，不入库）
 artifacts/uploads/
+# 流水线跑出来的结果快照（每次运行都会重写，属运行产物：批次数据在用户工作区轮次归档里）
+artifacts/*.json
 # 用户工作区（~/.ruiyun-autotest）在用户主目录下，天然不入库；
 # 历史位置 workspace/ 若仍存在也一并忽略
 workspace/

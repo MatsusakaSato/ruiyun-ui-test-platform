@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""睿云智能工作台 · 硬 Bug 覆盖率测试平台 —— 主流程编排。
+"""睿云智能工作台 · UI 测试平台 —— 主流程编排。
 
-三段式流水线：
-  Stage 1  UI 自动化操作   drivers/ui_driver.py  注入用例、等待新会话落盘
-  Stage 2  日志覆盖断言     core/log_parser.py + core/assertor.py
-  Stage 3  测试报告生成     core/metrics.py + report/builder.py
+三段式流水线（控制台按 [1/3] [2/3] [3/3] 报进度）：
+  1  UI 自动化操作   drivers/ui_driver.py  注入用例、等待新会话落盘
+  2  日志校验调用链   core/log_parser.py + core/assertor.py
+  3  测试报告生成     core/metrics.py + report/builder.py
 
 用法：
     python run_pipeline.py                    # 完整流程（UI + 日志 + 报告）
     python run_pipeline.py --cases 1          # 只跑前 1 条用例
-    python run_pipeline.py --keep-app         # 结束后保留应用进程
+    python run_pipeline.py --keep-app         # 已废弃（应用现在常驻，不会自动关闭）
 """
 from __future__ import annotations
 
@@ -36,6 +36,13 @@ from report.builder import render_report  # noqa: E402
 
 def _log(msg: str) -> None:
     print(msg, flush=True)
+
+
+# 控制台分隔线宽度：与最宽的汇总行持平，够用即可
+_RULE = "─" * 58
+
+# 控制台一律说中文，不把内部状态码（PASS/FAIL/UI_FAIL）直接抛给用户
+_STATUS_CN = {"PASS": "通过", "FAIL": "断言失败", "UI_FAIL": "UI 失败"}
 
 
 def _ev_ts(ev: dict) -> float:
@@ -182,9 +189,10 @@ def run_ui_cases(cfg: dict, cases: list, driver) -> list:
             )
         results.append(res)
         tr = res.trace
-        _log(f"        ← 收取 {res.case_id} | 会话 {sess.name} | 工具调用 "
-             f"{len(tr.tool_calls) if tr else 0} | 命中 {len(res.findings)} | {res.status}"
-             + ("（等待上限，非异常）" if not done else ""))
+        _log(f"        已收取 {res.case_id} · 会话 {sess.name} · 工具调用 "
+             f"{len(tr.tool_calls) if tr else 0} 次 · 问题 {len(res.findings)} 个 · "
+             f"{_STATUS_CN.get(res.status, res.status)}"
+             + ("（等待超时，按已有日志出结果）" if not done else ""))
 
     while pending or inflight:
         # ---------- 1) 填满在途窗口 ----------
@@ -193,8 +201,8 @@ def run_ui_cases(cfg: dict, cases: list, driver) -> list:
             cid = case.get("id") or f"CASE-{i:03d}"
             name = case.get("name") or cid
             prompt = case.get("prompt") or ""
-            _log(f"\n[{i}/{n_total}] {cid} · {name}")
-            _log(f"        提示词: {prompt[:60]}{'...' if len(prompt) > 60 else ''}")
+            _log(f"\n发送 {i}/{n_total} · {cid if name == cid else cid + ' ' + name}")
+            _log(f"        提问：{prompt[:60]}{'...' if len(prompt) > 60 else ''}")
             res = CaseResult(
                 case_id=cid, name=name, prompt=prompt,
                 expected_tools=case.get("expect_tools") or [],
@@ -211,15 +219,16 @@ def run_ui_cases(cfg: dict, cases: list, driver) -> list:
                     except Exception:
                         st = {}
                     if st.get("login_like"):
-                        res.ui_error = ("应用停留在登录页（页面存在登录/密码框）："
-                                        "请先在该应用内完成登录，再运行测试")
+                        res.ui_error = ("应用停留在登录页（页面上有登录/密码框）："
+                                        "请先在该应用里完成登录，再运行测试")
                     else:
-                        res.ui_error = "无法回到新建任务首页"
-                    _log(f"        ✗ {res.ui_error}"
-                         f" | 页面 {st.get('href') or '?'}"
-                         f" | 新建任务按钮={st.get('has_new_task')}"
-                         f" 输入区={st.get('has_composer')}"
-                         f" | 正文 {st.get('body_head') or ''}")
+                        res.ui_error = "没能回到「新建任务」首页"
+                    _log(f"        失败：{res.ui_error}"
+                         f"（页面 {st.get('href') or '未知'} · "
+                         f"新建任务按钮 {'有' if st.get('has_new_task') else '无'} · "
+                         f"输入区 {'有' if st.get('has_composer') else '无'}）")
+                    if st.get("body_head"):
+                        _log(f"        页面正文开头：{st['body_head']}")
                     res.elapsed_s = time.time() - t0
                     results.append(res)
                     continue
@@ -232,7 +241,7 @@ def run_ui_cases(cfg: dict, cases: list, driver) -> list:
                     res.attachments = attach_paths
                     ok_att, msg_att = driver.attach_files(attach_paths)
                     res.attach_note = msg_att
-                    _log(f"        附件{'已引用' if ok_att else '投递失败'}: {msg_att}")
+                    _log(f"        附件：{'已引用' if ok_att else '投递失败 —— ' + msg_att}")
                     if not ok_att:
                         res.ui_error = f"附件未投递：{msg_att}"
 
@@ -250,36 +259,38 @@ def run_ui_cases(cfg: dict, cases: list, driver) -> list:
                     except Exception:
                         st = {}
                     res.ui_error = (
-                        "发送后未产生新会话日志"
-                        + (f"（发送方式 {how}；输入框 {st.get('text_len')} 字，"
-                           f"发送按钮 {st.get('send_button') or '未找到'}）" if st else ""))
+                        "发送后没有产生新会话日志"
+                        + (f"（发送方式 {how}；输入框里 {st.get('text_len')} 字，"
+                           f"发送按钮 {st.get('send_button') or '没找到'}）" if st else ""))
                     res.elapsed_s = time.time() - t0
                     results.append(res)
-                    _log(f"        ✗ 未产生新会话 | 发送方式 {how} | 输入框 "
-                         f"{st.get('text_len', '?')} 字、发送按钮 "
-                         f"{st.get('send_button') or '未找到'}"
-                         f"（选择器 {st.get('input_selector') or '未定位到输入框'}）")
+                    _log(f"        失败：没有产生新会话（发送方式 {how}，输入框 "
+                         f"{st.get('text_len', '?')} 字，发送按钮 "
+                         f"{st.get('send_button') or '没找到'}）")
+                    if st.get("input_selector"):
+                        _log(f"        输入框定位：{st['input_selector']}")
                     continue
 
                 res.session_id = sess.name
                 # 事件归属：此后驱动点击的确认卡片都算在这条会话头上
                 driver.set_current_sess(sess)
                 inflight.append([res, sess, False, t0])
-                _log(f"        已发送（{how}），会话 {sess.name} 已创建"
-                     f"（在途 {len(inflight)}/{max_inflight}）")
+                _log(f"        已发送 · 会话 {sess.name} 已创建（进行中 "
+                     f"{len(inflight)}/{max_inflight}）")
             except Exception as exc:
                 res.ui_ok = False
                 res.ui_error = f"{type(exc).__name__}: {exc}"
-                _log(f"        ✗ UI 异常: {res.ui_error}")
+                _log(f"        失败：界面操作出错 —— {res.ui_error}")
                 # 输入相关的异常一律补一份页面现状：登录页 / 组件未挂载 / 选择器失效
                 # 在界面上看起来都是「发不出去」，必须能区分
                 if "输入框" in str(exc) or "未写入" in str(exc):
                     try:
                         st = driver.page_state() or {}
-                        _log(f"          页面 {st.get('href') or '?'}"
-                             f" | 登录页={st.get('login_like')}"
-                             f" | 输入区={st.get('has_composer')}"
-                             f" | 正文 {st.get('body_head') or ''}")
+                        _log(f"        当前页面 {st.get('href') or '未知'}，"
+                             f"登录页 {'是' if st.get('login_like') else '否'}，"
+                             f"输入区 {'有' if st.get('has_composer') else '无'}")
+                        if st.get("body_head"):
+                            _log(f"        页面正文开头：{st['body_head']}")
                     except Exception:
                         pass
                 res.elapsed_s = time.time() - t0
@@ -290,8 +301,8 @@ def run_ui_cases(cfg: dict, cases: list, driver) -> list:
             continue
         if not pending and not drain_logged:
             drain_logged = True
-            _log(f"\n  全部 {n_total} 条用例已发送，当前在途 {len(inflight)} 条 —— "
-                 f"等待生成完成并逐条收取（谁先完成先收谁，收取后即补入下一条）…")
+            _log(f"\n  {n_total} 条用例已全部发送，进行中 {len(inflight)} 条 —— "
+                 f"等待生成完成后依次收取…")
 
         # 自动确认连续失败 → 请求人工介入：给最旧的在途用例挂 P0 finding（仅一次）
         if (getattr(driver, "confirm_human_needed", False)
@@ -307,11 +318,11 @@ def run_ui_cases(cfg: dict, cases: list, driver) -> list:
                 detail=("确认卡片自动点击连续 5 次失败，任务卡在等待人工授权。"
                         "请在应用界面手动处理；处理后的结果仍会被正常采集，"
                         "但该用例已标记需人工复核。"),
-                evidence="详见控制台 [auto-confirm] 日志与本用例时间线中的自动确认条目",
+                evidence="详见控制台「确认」相关日志，以及本用例时间线里的自动确认条目",
             ))
             res0.ui_ok = True
-            _log("        ‼️ 自动确认连续失败 —— 已标记需人工介入"
-                 f"（用例 {res0.case_id}），请在应用界面手动点击确认卡片")
+            _log("        自动确认连续失败，需要你手动处理：用例 "
+                 f"{res0.case_id} 卡在确认卡片，请在应用界面点一下")
 
         dirs = [sess for _, sess, _, _ in inflight]
         pairs = [(sess, res) for res, sess, _, _ in inflight]
@@ -349,7 +360,7 @@ def load_cases(cases_file: str) -> list:
     """
     path = Path(cases_file) if cases_file else preset_path()
     if not path.is_file():
-        _log(f"  ✗ 用例文件不存在: {path}")
+        _log(f"  找不到用例文件：{path}")
         return []
     text = path.read_text(encoding="utf-8")
     if path.suffix.lower() == ".json":
@@ -363,7 +374,7 @@ def load_cases(cases_file: str) -> list:
 
 # --------------------------------------------------------------------- main
 def main() -> int:
-    ap = argparse.ArgumentParser(description="睿云智能工作台硬 Bug 覆盖率测试平台")
+    ap = argparse.ArgumentParser(description="睿云智能工作台 UI 测试平台")
     ap.add_argument("--config", default=str(config_path()))
     ap.add_argument("--cases", type=int, default=0, help="只执行前 N 条用例")
     ap.add_argument("--cases-file", default="",
@@ -374,6 +385,9 @@ def main() -> int:
                     help="最多验证多少个 bug 签名（按 P0→P1 排序取前 N，0=全部）")
     ap.add_argument("--max-inflight", type=int, default=0,
                     help="同时在途用例上限（流水线并发数），0=沿用 config.yaml 的 max_inflight")
+    ap.add_argument("--auto-confirm", choices=("on", "off"), default=None,
+                    help="是否自动点击确认卡片 / 选项卡作答：on=强制开启，off=强制关闭，"
+                         "不传则沿用 config.yaml 的 app.auto_confirm")
     ap.add_argument("--keep-app", action="store_true",
                     help="[已废弃] 应用现在常驻不关闭，该参数无任何作用，仅为兼容旧命令保留")
     ap.add_argument("--run-id", default="", help="轮次 ID（可视化平台传入，用于归档该轮全部数据）")
@@ -386,41 +400,51 @@ def main() -> int:
     cfg = effective_config(cfg)
     if args.max_inflight > 0:
         cfg["max_inflight"] = args.max_inflight
+    # 自动点击：界面开关显式传值就覆盖配置；不传（None）时沿用 config.yaml，
+    # 这样命令行直接跑 run_pipeline.py 的行为不变。
+    if args.auto_confirm is not None:
+        cfg.setdefault("app", {})["auto_confirm"] = (args.auto_confirm == "on")
     if args.keep_app:
-        _log("· 提示：--keep-app 已废弃（应用现在常驻，运行结束不会关闭）")
+        _log("提示：--keep-app 已失效（应用现在常驻，运行结束不会关闭）")
 
     cases = load_cases(args.cases_file)
     if args.cases:
         cases = cases[: args.cases]
     if not cases:
-        _log("  ✗ 本轮没有可用用例，已中止")
+        _log("  本轮没有可用用例，已中止")
         return 2
     app_version, bundle_id = read_app_version(cfg)
     max_iter = read_max_iterations(cfg)
     run_mode = "UI 自动化"
     case_src = "手动输入" if args.cases_file else "testcases.yaml 预设"
-    _log("=" * 74)
-    _log(f"睿云智能工作台 · 硬 Bug 覆盖率测试平台")
-    _log(f"应用版本 {app_version} | 用例 {len(cases)} 条（{case_src}）| 模式 {run_mode} | "
-         f"ReAct 迭代上限 {max_iter or '未读取到'}"
-         + f" | 流水线并发 {max(1, int(cfg.get('max_inflight', 5)))}")
-    _log("=" * 74)
+    _log(_RULE)
+    _log("睿云智能工作台 · UI 测试平台")
+    _log(f"应用版本 {app_version or '未读取到'} · 用例 {len(cases)} 条（{case_src}）")
+    _log(f"并发 {max(1, int(cfg.get('max_inflight', 5)))} 条 · "
+         f"迭代上限 {max_iter or '未读取到'} · 模式 {run_mode}"
+         # 自动点击只在被显式指定时说明：沿用配置时不必占一行
+         + (" · 自动点击 开" if args.auto_confirm == "on"
+            else " · 自动点击 关" if args.auto_confirm == "off" else ""))
+    if not (cfg.get("app") or {}).get("auto_confirm", False):
+        # 关掉自动点击时先提醒一句：遇到确认卡片只能人工点，否则会一直等到超时
+        _log("提示：自动点击已关闭，用例出现确认卡片时需要你自己在应用里点一下，"
+             "否则会等到超时才出结果")
+    _log(_RULE)
 
     driver = None
     results = []
 
     from drivers.ui_driver import RuiyunUIDriver
     driver = RuiyunUIDriver(cfg)
-    _log("\n[Stage 1] 接入应用（已运行则复用，未运行则启动）...")
+    _log("\n[1/3] 连接应用…")
     ok, how = driver.ensure_ready()
     if not ok:
         if how == "launch_failed":
-            _log("  ✗ 应用启动失败或调试端口未就绪")
+            _log("  失败：应用没能启动，或调试端口未就绪")
         else:
-            _log("  ✗ 无法接入渲染进程")
+            _log("  失败：连不上应用界面（渲染进程不可用）")
         return 2
-    _log(f"  ✓ {'复用已运行的应用' if how == 'reused' else '已启动应用'} | "
-         f"界面: {driver.target_url}")
+    _log(f"  已连接（{'复用正在运行的应用' if how == 'reused' else '新启动了应用'}）")
 
     # 应用常驻：默认结束后不关闭，仅断开 CDP 连接（下次运行直接复用）。
     # 仅当 config 显式设 close_app_after_run=true 时才关闭「我们自己启动的」实例。
@@ -434,7 +458,7 @@ def main() -> int:
 
     # --------------------------------------------- Stage 2 本轮日志覆盖断言
     # 评估口径：只针对本轮用例产生的会话断言，不追溯历史日志
-    _log("\n[Stage 2] 本轮调用链路断言（仅本轮用例会话）...")
+    _log("\n[2/3] 校验调用链路…")
     t_stage2 = time.time()
     max_iter = read_max_iterations(cfg)
     round_findings = [f for c in results for f in c.findings]
@@ -442,7 +466,7 @@ def main() -> int:
         if c.trace is not None and not c.findings:
             # 兜底：UI 阶段未断言的（如回放失败路径）补一次
             c.findings = run_assertions(c.trace, cfg["rules"], max_iter)
-    _log(f"  本轮用例 {len(results)} 条，断言命中 {len(round_findings)} 条"
+    _log(f"  {len(results)} 条用例共命中 {len(round_findings)} 个问题"
          + ("（本轮未发现问题）" if not round_findings else ""))
     t_stage2 = time.time() - t_stage2
 
@@ -456,20 +480,20 @@ def main() -> int:
             # P0 优先验证，控制耗时
             recipes.sort(key=lambda r: (0 if r.severity == "P0" else 1, r.key))
             recipes = recipes[: args.repro_limit]
-        _log(f"\n[Stage 2.5] 复现率验证：{len(recipes)} 个 bug 签名 × {args.repro_times} 次")
+        _log(f"\n[附加] 复现率验证：{len(recipes)} 个问题 × {args.repro_times} 次")
         if not recipes:
-            _log("  无可用复现配方（原始提问缺失且无法合成）")
+            _log("  没有可复现的用例（缺原始提问，也无法合成）")
         for r in recipes:
-            _log(f"  ▶ {r.key}  提示词: {r.prompt[:52]}")
+            _log(f"  · {r.key}  提问：{r.prompt[:52]}")
             verify_recipe(r, driver, cfg, times=args.repro_times, log=lambda m: _log("    " + m))
-            _log(f"    ⇒ 复现 {r.hits}/{r.attempts} = {r.rate:.0%} → {r.stability}")
+            _log(f"    复现 {r.hits}/{r.attempts} = {r.rate:.0%} → {r.stability}")
         driver.detach()   # 仅断开连接，应用保持运行
         if cfg.get("app", {}).get("close_app_after_run"):
             driver.kill_app()
-            _log("  · 已按 close_app_after_run=true 关闭应用进程")
+            _log("  已关闭应用进程")
 
     # ---------------------------------------------------------- Stage 3 报告
-    _log("\n[Stage 3] 生成可视化测试报告...")
+    _log("\n[3/3] 生成测试报告…")
     t_stage3 = time.time()
     elapsed = time.time() - t_start
     stage_times = {
@@ -540,35 +564,33 @@ def main() -> int:
                 report_path.read_text(encoding="utf-8"), encoding="utf-8")
         except Exception:
             pass
-        _log(f"\n  轮次已归档 → {round_dir}")
+        _log(f"\n  本轮数据已归档：{round_dir}")
 
     s = metrics["summary"]
     obj = metrics["objective"]
-    _log("\n" + "=" * 74)
-    _log("交付结果（评估口径：仅本轮对话）")
-    _log(f"  用例        {s['cases']} 条 → 通过 {s['passed']} / 断言失败 {s['failed']} / "
-         f"UI失败 {s['ui_failed']}  （通过率 {s['pass_rate']}%）")
-    _log(f"  问题发现    {s['findings']} 条（P0 {s['p0']} / P1 {s['p1']}）"
+    _log("\n" + _RULE)
+    _log("本轮结果")
+    _log(f"  用例        {s['cases']} 条：通过 {s['passed']} · 断言失败 {s['failed']} · "
+         f"UI 失败 {s['ui_failed']}（通过率 {s['pass_rate']}%）")
+    _log(f"  问题发现    {s['findings']} 个（P0 {s['p0']} · P1 {s['p1']}）"
          + ("  ← 本轮未发现问题" if s['findings'] == 0 else ""))
     _log(f"  工具调用    {s['tool_calls_total']} 次，失败 {s['tool_calls_failed']} 次"
-         f"（失败率 {s['tool_fail_rate']}%），截断 {s['tool_calls_truncated']} 次")
-    _log(f"  客观用量    提问 {obj['requests']['turns']} 轮 · 思考 {obj['requests']['thinking_steps']} 步 · "
-         f"token估算 {obj['tokens']['total_est']}（入 {obj['tokens']['input_est']} / 出 {obj['tokens']['output_est']}）")
+         f"（{s['tool_fail_rate']}%），截断 {s['tool_calls_truncated']} 次")
+    _log(f"  对话用量    提问 {obj['requests']['turns']} 轮 · 思考 {obj['requests']['thinking_steps']} 步 · "
+         f"估算 token {obj['tokens']['total_est']}（入 {obj['tokens']['input_est']} / 出 {obj['tokens']['output_est']}）")
     _log(f"  响应耗时    平均首响 {obj['timing']['avg_first_response_s']}s · "
-         f"平台阶段 {obj['timing']['stage_times']}")
+         f"总耗时 {elapsed:.1f}s")
     if metrics.get("repro_summary", {}).get("verified"):
         rs = metrics["repro_summary"]
-        _log(f"  复现率      已验证 {rs['verified']} 个签名：必现 {rs['stable']} / "
-             f"高概率 {rs['likely']} / 偶发 {rs['flaky']}，平均 {rs['avg_rate']:.0%}")
+        _log(f"  复现率      已验证 {rs['verified']} 个问题：必现 {rs['stable']} · "
+             f"高概率 {rs['likely']} · 偶发 {rs['flaky']}，平均 {rs['avg_rate']:.0%}")
     _log(f"  报告        {report_path}")
     if driver is not None and getattr(driver, "confirm_events", None):
         ce = driver.confirm_events
         _log(f"  自动确认    {len(ce)} 次 → " + "；".join(
             f"{e['time']} 「{e['text'][:20]}」" for e in ce[:6])
             + ("…" if len(ce) > 6 else ""))
-    _log(f"  指标 JSON   {art / 'metrics.json'}")
-    _log(f"  总耗时      {elapsed:.1f}s")
-    _log("=" * 74)
+    _log(_RULE)
     return 0
 
 

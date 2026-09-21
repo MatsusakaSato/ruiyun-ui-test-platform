@@ -201,16 +201,30 @@ tr:last-child td{border-bottom:none}
   border:none;background:none;padding:8px 10px;border-radius:8px;cursor:pointer;
   font-size:12.5px;font-family:inherit;color:var(--tx);white-space:nowrap}
 .sm-item:hover{background:#f1f5f9}
-/* ---------- 设置二级菜单 ---------- */
-.settings-wrap{position:relative}
-.settings-menu{display:none;position:absolute;top:calc(100% + 6px);right:0;z-index:60;
-  background:var(--card);border:1px solid var(--line);border-radius:10px;
-  box-shadow:0 8px 24px rgba(15,23,42,.12);padding:6px;min-width:190px}
-.settings-menu.on{display:block}
-.sm-item{display:flex;align-items:center;gap:8px;width:100%;text-align:left;
-  border:none;background:none;padding:8px 10px;border-radius:8px;cursor:pointer;
-  font-size:12.5px;font-family:inherit;color:var(--tx);white-space:nowrap}
-.sm-item:hover{background:#f1f5f9}
+.sm-item:disabled{opacity:.45;cursor:not-allowed}
+.sm-item:disabled:hover{background:none}
+.sm-item .sm-val{margin-left:auto;color:var(--accent);font-size:12px}
+.sm-item .sm-caret{color:var(--tx3);font-size:10px;width:9px;text-align:center}
+/* 设置菜单里的一行开关：胶囊 + 圆点，仅表示当前状态（点击整行即切换） */
+.sw{margin-left:auto;flex:0 0 auto;width:30px;height:16px;border-radius:9px;
+  background:#cbd5e1;position:relative;transition:background .15s}
+.sw i{position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;
+  background:#fff;transition:left .15s;box-shadow:0 1px 2px rgba(15,23,42,.2)}
+.sw.on{background:var(--accent)}
+.sw.on i{left:16px}
+/* 并发数面板：在设置菜单内就地展开，不另开弹窗（改完即用，无需保存） */
+.im-panel{display:none;padding:6px 8px 9px}
+.im-panel.on{display:block}
+.im-hd{font-size:11px;color:var(--tx3);margin-bottom:7px}
+.im-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.im-opt{border:1px solid var(--line);background:#fff;color:var(--tx2);
+  border-radius:7px;padding:5px 0;font-size:12px;font-weight:600;font-family:inherit}
+.im-opt:hover{border-color:var(--accent);color:var(--accent)}
+.im-opt.active{border-color:var(--accent);background:#eff6ff;color:var(--accent)}
+.im-ft{font-size:10.5px;color:var(--tx3);margin-top:7px}
+.settings-menu{min-width:200px}
+/* 环境选择器：文案已缩短为「开发 / 线上 / 不注入」，这里再兜一层防自定义长名撑宽 */
+#optEnv{max-width:104px;text-overflow:ellipsis}
 /* 应用设置：路径输入框旁的「在访达中打开」按钮 */
 .inp-row{display:flex;gap:6px;align-items:center}
 .inp-row input{flex:1 1 auto}
@@ -469,28 +483,39 @@ tr:last-child td{border-bottom:none}
     <div class="settings-menu" id="settingsMenu">
       <button class="sm-item" data-act="app">🖥 应用与工作区</button>
       <button class="sm-item" data-act="model" id="smModel"><span class="llm-dot" id="llmDot"></span>模型设置</button>
+      <button class="sm-item" data-act="inflight" id="smInflight">⚡ 并发数
+        <b class="sm-val" id="smInflightVal">5</b>
+        <span class="sm-caret" id="smInflightCaret">▸</span>
+      </button>
+      <button class="sm-item" data-act="autoclick" id="smAutoClick"
+              title="开启后，平台会替你点击确认卡片、作答选项卡（拒绝/取消类按钮永不点）">
+        <span>⚡ 自动点击确认</span>
+        <span class="sw" id="swAutoClick"><i></i></span>
+      </button>
+      <div class="im-panel" id="inflightPanel">
+        <div class="im-hd">同时执行的用例上限</div>
+        <div class="im-grid" id="inflightGrid">
+          <button class="im-opt" data-v="1">1</button>
+          <button class="im-opt" data-v="2">2</button>
+          <button class="im-opt" data-v="3">3</button>
+          <button class="im-opt" data-v="5">5</button>
+          <button class="im-opt" data-v="8">8</button>
+          <button class="im-opt" data-v="10">10</button>
+          <button class="im-opt" data-v="15">15</button>
+          <button class="im-opt" data-v="20">20</button>
+        </div>
+        <div class="im-ft">1 = 一条跑完再跑下一条</div>
+      </div>
     </div>
     <span class="q" data-tip="设置二级菜单：
 - 应用与工作区：被测应用路径 / 会话日志目录 / 用户工作区目录，
   每个路径旁的 📁 按钮可在访达（macOS）/ 资源管理器（Windows）中打开当前生效路径
 - 模型设置：供应商地址与 API Key（用于质量评估）
+- 自动点击确认：替你点确认卡片、作答选项卡，只对下次运行生效
+- 并发数：同时执行的用例上限
 工作区内含预设用例、附件库、轮次归档与 config.yaml。">?</span>
   </span>
-  <!-- 复现次数 / 签名上限 暂时下线（后端能力保留，需要时恢复此区块并还原 btnRun 参数） -->
-  <span class="opt" id="wrapInflight">并发数
-    <select id="optInflight">
-      <option value="1">1</option><option value="2">2</option>
-      <option value="3">3</option><option value="5" selected>5</option>
-      <option value="8">8</option><option value="10">10</option>
-      <option value="15">15</option><option value="20">20</option>
-    </select>
-    <span class="q" data-tip="同时在生成中的用例上限（流水线并发）：
-一条用例完成收取后，立即补入下一条待跑用例，
-窗口内始终最多 N 条用例在执行，避免一次塞入过多用例拖垮客户端。
-默认 5；选 1 退化为完全串行。
-控制台日志中的「在途 n/N」即当前并发水位。">?</span>
-  </span>
-  <button class="btn-run" id="btnRun">▶ 运行测试</button>
+  <button class="btn-run" id="btnRun" title="也可以直接按回车运行">▶ 运行测试</button>
   <button class="btn-stop" id="btnStop" style="display:none" title="终止当前测试（本轮不产出报告）">■ 终止测试</button>
 </div></header>
 
@@ -506,7 +531,7 @@ tr:last-child td{border-bottom:none}
     <button class="btn-ghost" id="btnClearCases">清空</button>
   </h3>
   <div id="caseRows"></div>
-  <div class="hint" id="caseHint">逐条填写提示词，运行时按顺序执行，每条用例独立会话。</div>
+  <div class="hint" id="caseHint">每行一条提问，运行时按顺序执行，每条用例单独开一个会话。</div>
 </div>
 
 <div class="grid">
@@ -541,7 +566,7 @@ tr:last-child td{border-bottom:none}
       <div class="padd-body" id="paddBody">
         <div class="padd-card">
           <div class="fld">
-            <label for="paddPrompt">提示词 <span style="color:var(--p0)">*</span></label>
+            <label for="paddPrompt">提问 <span style="color:var(--p0)">*</span></label>
             <textarea id="paddPrompt" rows="3" placeholder="填入要加入预设的问题原文（必填）…"></textarea>
           </div>
           <div class="padd-row">
@@ -591,7 +616,7 @@ tr:last-child td{border-bottom:none}
       </div>
       <div class="mf-row">
         <span class="mf-label">关键词</span>
-        <input class="mf-kw" id="impKw" placeholder="按提示词内容过滤（可选）"/>
+        <input class="mf-kw" id="impKw" placeholder="按提问内容过滤（可选）"/>
       </div>
     </div>
     <div class="modal-list" id="impList"></div>
@@ -805,12 +830,12 @@ $('optEnv').onchange = async ()=>{
     ENV_CFG=j; syncEnvUI();
     const label=((j.profiles||[]).find(p=>p.key===j.current)||{}).label
                 || (j.current ? j.current : (j.none_label||'不注入'));
-    alert(`已切换到「${label}」\n\n该设置将在下次启动应用时生效。`);
+    alert(`已切换到「${label}」\n\n下次启动应用时生效。`);
   }catch(e){ alert('请求失败：'+e.message); await loadEnv(); }
 };
 
 $('btnCloseApp').onclick = async ()=>{
-  if(!confirm('确定关闭应用实例？\n\n关闭后才能重新选择环境；下次运行测试时会按所选环境重新启动。')) return;
+  if(!confirm('确定关闭应用实例？\n\n关闭后可以重新选择环境，下次运行测试时会按所选环境启动。')) return;
   $('btnCloseApp').disabled=true;
   try{
     const r=await fetch('/api/app/close',{method:'POST'});
@@ -1040,11 +1065,61 @@ document.addEventListener('click',e=>{
 });
 $('settingsMenu').onclick=e=>{
   const b=e.target.closest('.sm-item'); if(!b) return;
-  $('settingsMenu').classList.remove('on');
   const act=b.dataset.act;
+  // 并发数是「菜单内就地展开」的子面板：不关菜单，也不打开弹窗
+  if(act==='inflight'){ toggleInflightPanel(); return; }
+  // 自动点击是就地切换的开关：切完保持菜单打开，方便连续调
+  if(act==='autoclick'){
+    if(b.disabled) return;
+    AUTO_CLICK=!AUTO_CLICK; syncAutoClickUI(); return;
+  }
+  $('settingsMenu').classList.remove('on');
   if(act==='app') openAppCfg();
   else if(act==='model') openLlm();
 };
+/* ---------- 自动点击确认（设置菜单里的开关） ----------
+   只随本次运行下发（POST /api/run 的 auto_confirm），不写回 config.yaml：
+   初始值取服务端下发的配置默认值，运行中置灰不可改（改了也只影响下次运行）。 */
+let AUTO_CLICK=true;
+function syncAutoClickUI(){
+  const sw=$('swAutoClick');
+  if(sw) sw.classList.toggle('on',AUTO_CLICK);
+  const item=$('smAutoClick');
+  if(item){
+    // 运行中锁住：避免「看起来关了，驱动还在点」的错觉
+    item.disabled=RUNNING;
+    item.title=(RUNNING?'测试运行中，改动会在下次运行生效：':'')
+      +'开启后，平台会替你点击确认卡片、作答选项卡（拒绝/取消类按钮永不点）';
+  }
+}
+async function loadAutoClick(){
+  try{
+    const c=await (await fetch('/api/config')).json();
+    if(typeof c.auto_confirm==='boolean') AUTO_CLICK=c.auto_confirm;
+  }catch(e){}                     // 读不到就沿用 true：与配置模板的默认一致
+  syncAutoClickUI();
+}
+/* ---------- 并发数（设置菜单内的子面板） ----------
+   内存态即可：每次点「运行测试」都会把它随请求发给服务端，
+   不需要落盘，也不需要在刷新后记住 —— 默认 5 与 config.yaml 一致。 */
+let INFLIGHT=5;
+function syncInflightUI(){
+  $('smInflightVal').textContent=INFLIGHT;
+  $('inflightGrid').querySelectorAll('.im-opt').forEach(el=>{
+    el.classList.toggle('active',+el.dataset.v===INFLIGHT);
+  });
+}
+function toggleInflightPanel(){
+  const p=$('inflightPanel');
+  const on=!p.classList.contains('on');
+  p.classList.toggle('on',on);
+  $('smInflightCaret').textContent=on?'▾':'▸';
+}
+$('inflightGrid').onclick=e=>{
+  const b=e.target.closest('.im-opt'); if(!b) return;
+  INFLIGHT=+b.dataset.v; syncInflightUI();
+};
+syncInflightUI();
 /* 📁 按钮：在访达中打开「当前生效路径」（不是输入框草稿值 ——
    草稿还没保存；生效值以 APP_CFG_DESC 快照为准，弹窗打开/保存后刷新） */
 let APP_CFG_DESC=null;
@@ -1214,7 +1289,7 @@ $('libList').onclick=e=>{
 };
 async function delUpload(p){
   if(!p) return;
-  if(!confirm('从附件库删除该文件？\n\n文件将从磁盘移除，不可撤销；\n引用它的用例会同步移除该附件。')) return;
+  if(!confirm('从附件库删除该文件？\n\n文件会从磁盘删除，无法恢复；\n引用了它的用例会同步去掉这个附件。')) return;
   try{
     const r=await fetch('/api/upload/delete',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({path:p})});
@@ -1241,8 +1316,8 @@ function syncCaseState(){
   $('caseCount').textContent=`（已填写 ${filled} / ${CASES.length} 条）`;
   $('btnRun').disabled=RUNNING||filled===0;
   const hint=$('caseHint');
-  if(filled===0){ hint.className='hint warn'; hint.textContent='请至少填写一条用例的提示词后再运行。'; }
-  else { hint.className='hint'; hint.textContent=`将按顺序执行 ${filled} 条用例，每条用例独立会话。`; }
+  if(filled===0){ hint.className='hint warn'; hint.textContent='请至少填写一条用例的提问。'; }
+  else { hint.className='hint'; hint.textContent=`将按顺序执行 ${filled} 条用例，每条用例单独开一个会话。`; }
 }
 
 function renderCases(){
@@ -1418,7 +1493,7 @@ function reindexPreset(keepSelIds){
 }
 async function delPreset(id){
   if(!id) return;
-  if(!confirm(`删除预设用例 ${id}？\n\n该操作直接写入 testcases.yaml，不可撤销。`)) return;
+  if(!confirm(`删除预设用例 ${id}？\n\n会直接写入 testcases.yaml，无法恢复。`)) return;
   const keepSel=new Set(PRESET.filter(c=>PSEL.has(c.idx)).map(c=>c.id));
   try{
     const r=await fetch('/api/preset-cases',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -1438,7 +1513,7 @@ $('paddToggle').onclick=()=>{
 $('paddOk').onclick=async()=>{
   const prompt=$('paddPrompt').value.trim();
   const msg=$('paddMsg');
-  if(!prompt){ msg.textContent='提示词为必填'; msg.style.color='#b91c1c'; return; }
+  if(!prompt){ msg.textContent='提问不能为空'; msg.style.color='#b91c1c'; return; }
   const targets=[...$('paddTargets').querySelectorAll('input:checked')].map(i=>i.value);
   const scene=$('paddScene').value.trim();
   const btn=$('paddOk'); btn.disabled=true; msg.textContent='保存中…'; msg.style.color='';
@@ -1493,21 +1568,39 @@ async function startRun(body){
   $('console').textContent='';
   setRunning(true);
 }
-$('btnRun').onclick=()=>{
+/* 运行测试：按钮点击与「按回车」共用这一条路径。
+   校验与按钮置灰口径一致（RUNNING 中 / 无有效用例都不发请求）。 */
+function doRun(){
+  if(RUNNING){ alert('已有测试在运行，请等它结束或先终止'); return; }
   const items=CASES.filter(c=>c.prompt.trim())
     .map((c,i)=>({id:'CASE-'+String(i+1).padStart(3,'0'),prompt:c.prompt.trim(),
                   labels:c.labels||{},
                   // 附件只传本机绝对路径：运行时由驱动拖拽投递给被测应用
                   attachments:(c.attachments||[]).map(a=>a.path)}));
-  if(!items.length){ alert('请至少填写一条用例的提示词'); return; }
+  if(!items.length){ alert('请至少填写一条用例的提问'); return; }
   /* 复现次数/签名上限 暂时下线：不传参，后端默认关闭复现验证 */
-  startRun({case_items:items,
-            max_inflight:+$('optInflight').value});
-};
+  startRun({case_items:items, max_inflight:INFLIGHT, auto_confirm:AUTO_CLICK});
+}
+$('btnRun').onclick=doRun;
+
+/* 回车即运行：焦点在「本轮用例」的提示词输入框里时按回车即可开跑。
+   只绑在用例输入框上 —— 设置弹窗里的路径、关键词等输入框按回车不该触发测试。 */
+$('caseRows').addEventListener('keydown',e=>{
+  if(e.key!=='Enter'||e.isComposing||e.shiftKey) return;   // 中文输入法候选态不触发
+  e.preventDefault();
+  doRun();
+});
+/* 预设用例的新增表单是多行输入：回车要能正常换行，故用 Ctrl/Cmd + 回车运行。 */
+$('paddPrompt').addEventListener('keydown',e=>{
+  if(e.key!=='Enter'||e.isComposing||!(e.ctrlKey||e.metaKey)) return;
+  e.preventDefault();
+  closeImport();       // 先收起预设弹窗，否则控制台被盖住看不见
+  doRun();
+});
 
 /* 终止测试：杀掉测试进程；本轮不归档、无报告。常驻应用不受影响 */
 $('btnStop').onclick=async()=>{
-  if(!confirm('确定终止当前测试？\n\n测试进程将被停止，本轮不产出报告；\n已完成的用例结果也会一并丢弃。\n被测应用不受影响，继续常驻。')) return;
+  if(!confirm('确定终止当前测试？\n\n测试进程会被停止，本轮不产出报告，\n已经跑完的用例结果也会一并丢弃。\n被测应用不受影响，继续常驻。')) return;
   $('btnStop').disabled=true;
   try{
     const r=await fetch('/api/run/stop',{method:'POST'});
@@ -1524,6 +1617,7 @@ function setRunning(v){
   // 状态统一由 syncCaseState 决定，避免绕过 filled===0 的校验把按钮点亮
   syncCaseState();
   syncEnvUI();                       // 测试期间关闭实例按钮需置灰
+  syncAutoClickUI();                 // 测试期间自动点击开关需锁定
   if(v&&!pollTimer) pollTimer=setInterval(pollStatus,1200);
   if(!v&&pollTimer){clearInterval(pollTimer);pollTimer=null;}
 }
@@ -1550,7 +1644,7 @@ function renderStatus(j){
     b.className='badge b-err'; b.textContent='已终止（未产出报告）';
   }
   // 异常结束：非 0 退出码，需要看控制台排查
-  else if(j.exit_code!=null){ b.className='badge b-err'; b.textContent='异常退出（code '+j.exit_code+'）'; }
+  else if(j.exit_code!=null){ b.className='badge b-err'; b.textContent='异常退出（退出码 '+j.exit_code+'）'; }
   else { b.className='badge b-idle'; b.textContent='空闲'; }
   if(j.lines&&j.lines.length){
     const c=$('console');
@@ -1579,7 +1673,7 @@ async function loadRounds(){
         :esc(r.run_id)}</div>
       <div class="rmeta">
         <span>${esc(r.finished_at)}</span>
-        <span>用例 ${okc}/${all} 通过</span>
+        <span>通过 ${okc}/${all} 条</span>
         <span>${fnd?fnd+' 个问题':'无问题'}</span>
         ${artLink(r)}
       </div>
@@ -1598,9 +1692,9 @@ function artLink(r){
   const a=r.artifacts||{};
   if(!a.count || !a.root) return '';
   const dirTip=a.multi_dir
-    ? '本轮产物分散在多个目录，这里打开它们的最近公共目录'
+    ? '本轮产物分散在多个目录，这里打开它们最接近的公共目录'
     : '本轮产物所在目录';
-  const srcTip=a.source==='evaluation'?'（该轮次无流水线产物清单，此处为评估阶段抽取的结果）':'';
+  const srcTip=a.source==='evaluation'?'（该轮次没有流水线产物清单，这里是评估阶段抽出来的）':'';
   const tip=`${dirTip}：${a.root}${srcTip}`;
   const names=(a.paths||[]).map(p=>String(p).replace(/\\/g,'/').split('/').pop());
   const list=names.slice(0,12).join('\n')+(names.length>12?`\n…共 ${names.length} 件`:'');
@@ -1609,8 +1703,8 @@ function artLink(r){
       onclick="event.stopPropagation();revealInFinder(event,this)">📁 产物目录 ${a.count} 件</span>`;
 }
 
-/* 轮次列表的提示词摘要：只显示前 PREVIEW_CHARS 个字符，超出省略。
-   多条用例时显示「首条 +N」，悬停可看全部提示词。 */
+/* 轮次列表的提问摘要：只显示前 PREVIEW_CHARS 个字符，超出省略。
+   多条用例时显示「首条 +N」，悬停可看全部。 */
 const PREVIEW_CHARS=42;
 
 function promptPreview(r){
@@ -1628,7 +1722,7 @@ function promptPreview(r){
 
 async function delRound(ev, rid){
   ev.stopPropagation();          // 别触发外层的 openRound
-  if(!confirm(`确定删除轮次 ${rid} ？\n\n该轮次的归档数据（用例结果、报告、控制台日志）将被永久删除，无法恢复。`)) return;
+  if(!confirm(`确定删除轮次 ${rid} ？\n\n该轮次的归档数据（用例结果、报告、控制台日志）会被永久删除，无法恢复。`)) return;
   try{
     const r = await fetch('/api/rounds/'+encodeURIComponent(rid), {method:'DELETE'});
     const j = await r.json();
@@ -1648,7 +1742,7 @@ async function openRound(rid){
   document.querySelectorAll('.round-item').forEach(el=>el.classList.remove('active'));
   event&&event.target&&event.target.closest&&event.target.closest('.round-item')?.classList.add('active');
   const j=await (await fetch('/api/rounds/'+rid)).json();
-  if(j.error){ alert('轮次数据缺失: '+rid); return; }
+  if(j.error){ alert('读不到该轮次的数据：'+rid); return; }
   renderRound(j);
 }
 
@@ -1671,7 +1765,7 @@ function renderRound(data){
   if(rp.verified){
     html+=`<div class="card" style="margin-bottom:14px"><h3 class="sec">复现率验证</h3>
       <div style="display:flex;gap:22px;flex-wrap:wrap;font-size:12.5px;color:var(--tx2)">
-        <span>已验证 <b style="color:var(--tx)">${rp.verified}</b> 个签名</span>
+        <span>已验证 <b style="color:var(--tx)">${rp.verified}</b> 个问题</span>
         <span>必现 <b style="color:var(--p0)">${rp.stable}</b></span>
         <span>高概率 <b style="color:var(--p1)">${rp.likely}</b></span>
         <span>偶发 <b>${rp.flaky}</b></span>
@@ -1716,27 +1810,27 @@ function objTab(m,d){
   let h='<div class="case-chips">'+cases.map((x,i)=>
       `<span class="chip-c ${i===currentCase?'active':''}" onclick="pickCase(${i})">${esc(x.case_id)} ${esc(x.name)} ${x.status==='PASS'?'✓':x.status==='FAIL'?'✗':'⚠'}</span>`).join('')+'</div>';
 
-  h+=`<div style="font-size:12.5px;margin-bottom:12px"><b>提示词：</b>${esc(c.prompt)}</div>`;
+  h+=`<div style="font-size:12.5px;margin-bottom:12px"><b>提问：</b>${esc(c.prompt)}</div>`;
 
-  h+='<h3 class="sec" style="margin-top:0">该用例耗时</h3><div class="tbl-card"><table>'
-    +`<tr><td>平台实测（发送 → 落盘稳定）</td><td style="text-align:right"><b>${c.elapsed_s??'—'}s</b></td></tr>`
-    +`<tr><td>首响延迟（提问 → 模型响应）</td><td style="text-align:right"><b>${tm.first_response_s??'—'}${tm.first_response_s!=null?'s':''}</b></td></tr>`
-    +`<tr><td>生成时长</td><td style="text-align:right"><b>${tm.generation_s??'—'}${tm.generation_s!=null?'s':''}</b></td></tr>`
+  h+='<h3 class="sec" style="margin-top:0">耗时</h3><div class="tbl-card"><table>'
+    +`<tr><td>平台记录（发出 → 结果写盘）</td><td style="text-align:right"><b>${c.elapsed_s??'—'}s</b></td></tr>`
+    +`<tr><td>首响耗时（提问 → 模型开始回应）</td><td style="text-align:right"><b>${tm.first_response_s??'—'}${tm.first_response_s!=null?'s':''}</b></td></tr>`
+    +`<tr><td>生成耗时</td><td style="text-align:right"><b>${tm.generation_s??'—'}${tm.generation_s!=null?'s':''}</b></td></tr>`
     +`<tr><td>会话时长</td><td style="text-align:right"><b>${tm.session_s??'—'}${tm.session_s!=null?'s':''}</b></td></tr>`
     +'</table></div>'
     +`<div class="note" style="margin:10px 0 16px">${esc(tm.note||'')}</div>`;
 
-  h+='<h3 class="sec">该用例调用与状态</h3><div class="tbl-card"><table>'
+  h+='<h3 class="sec">调用与状态</h3><div class="tbl-card"><table>'
     +`<tr><td>工具调用</td><td style="text-align:right"><b>${rq.tool_calls??0}</b> 次</td></tr>`
     +`<tr><td>思考步数</td><td style="text-align:right"><b>${rq.thinking_steps??0}</b> 步</td></tr>`
     +`<tr><td>对话轮次</td><td style="text-align:right"><b>${rq.turns??0}</b> 轮</td></tr>`
     +`<tr><td>调用成功 / 失败 / 截断</td><td style="text-align:right"><b>${stt.tool_ok??0} / ${stt.tool_fail??0} / ${stt.tool_truncated??0}</b></td></tr>`
-    +`<tr><td>调用链路一致性</td><td style="text-align:right"><span class="badge ${stt.chain_consistent===false?'b-fail':'b-pass'}">${stt.chain_consistent===false?'存在不一致':'一致'}</span></td></tr>`
+    +`<tr><td>调用链是否自洽</td><td style="text-align:right"><span class="badge ${stt.chain_consistent===false?'b-fail':'b-pass'}">${stt.chain_consistent===false?'不自洽':'自洽'}</span></td></tr>`
     +`<tr><td>会话收尾</td><td style="text-align:right"><span class="badge ${stt.session_closed?'b-pass':'b-fail'}">${esc(stt.closed_desc||'—')}</span></td></tr>`
     +'</table></div>';
 
-  h+='<h3 class="sec" style="margin-top:16px">该用例 token 用量（估算口径）</h3><div class="tbl-card"><table>'
-    +`<tr><td>输入（提示词 + 工具结果回灌）</td><td style="text-align:right"><b>${tk.input_tokens_est??0}</b></td></tr>`
+  h+='<h3 class="sec" style="margin-top:16px">token 用量（估算）</h3><div class="tbl-card"><table>'
+    +`<tr><td>输入（提问 + 工具结果回灌）</td><td style="text-align:right"><b>${tk.input_tokens_est??0}</b></td></tr>`
     +`<tr><td>输出（思考 + 答复 + 调用参数）</td><td style="text-align:right"><b>${tk.output_tokens_est??0}</b></td></tr>`
     +`<tr><td><b>合计</b></td><td style="text-align:right"><b style="color:var(--accent)">${tk.total_tokens_est??0}</b></td></tr>`
     +'</table></div>'
@@ -1744,18 +1838,18 @@ function objTab(m,d){
 
   // 该用例实际用到的工具（不跨用例聚合）
   const tools=c.tools||[];
-  h+='<h3 class="sec" style="margin-top:16px">该用例调用到的工具</h3><div class="tbl-card"><table><tr><th>工具</th><th>调用</th><th>失败</th><th>截断</th></tr>';
+  h+='<h3 class="sec" style="margin-top:16px">用到的工具</h3><div class="tbl-card"><table><tr><th>工具</th><th>调用</th><th>失败</th><th>截断</th></tr>';
   for(const t of tools){
     h+=`<tr><td class="mono">${esc(t.name)}</td><td>${t.calls}</td>`
       +`<td>${t.fail?`<span class="badge b-p0">${t.fail}</span>`:'—'}</td>`
       +`<td>${t.truncated?`<span class="badge b-p1">${t.truncated}</span>`:'—'}</td></tr>`;
   }
-  if(!tools.length) h+='<tr><td colspan="4" class="empty">该用例未调用工具</td></tr>';
+  if(!tools.length) h+='<tr><td colspan="4" class="empty">没有调用任何工具</td></tr>';
   h+='</table></div>';
 
   const sk=c.skills||[];
   if(sk.length){
-    h+='<h3 class="sec" style="margin-top:16px">该用例调用的 Skill</h3><div class="tbl-card"><table><tr><th>Skill</th><th>读取文件</th></tr>';
+    h+='<h3 class="sec" style="margin-top:16px">用到的 Skill</h3><div class="tbl-card"><table><tr><th>Skill</th><th>读取的文件</th></tr>';
     for(const x of sk){
       h+=`<tr><td><span class="badge" style="background:#ede9fe;color:#6d28d9">${esc(x.name)}</span></td>`
         +`<td class="mono">${esc((x.files||[]).join(', '))||'—'}</td></tr>`;
@@ -1784,6 +1878,18 @@ function pickCase(i){
   else $('tabBody').innerHTML=bugsTab(m,d);
 }
 
+/* 确认记录里的「操作」一栏：说白了就是「点了哪个答案」还是「按了哪个按钮」。
+   text 是选项文本（如「B. 先讲概念再练题」）或按钮文本（如「确认」「提交」）；
+   mode 只在没有 text 时才需要翻译（旧数据 / 只记了模式）。 */
+const CONFIRM_ACTION={ 'qcard-option':'选中选项','qcard-confirm':'确认本题',
+  'qcard-submit':'提交','qcard-fill':'填写自定义答案',
+  'keyword':'确认授权','first-option':'确认首个选项' };
+function confirmAction(st){
+  const ans=String(st.text||'').trim();
+  if(ans) return ans;
+  return CONFIRM_ACTION[st.mode] || st.label || '自动确认';
+}
+
 function caseTimeline(c){
   let h=`<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
     <span style="font-weight:700">${esc(c.name)}</span>
@@ -1797,7 +1903,7 @@ function caseTimeline(c){
     <span>思考步 <b>${c.thinking_count??0}</b></span>
     <span>答复 ${c.answer_chars??0} 字</span>
   </div>
-  <div style="font-size:12.5px;margin-bottom:6px"><b>提示词：</b>${esc(c.prompt)}</div>`;
+  <div style="font-size:12.5px;margin-bottom:6px"><b>提问：</b>${esc(c.prompt)}</div>`;
   if((c.attachments||[]).length){
     // 附件投递结果：attach_note 由驱动回填（以「引用计数是否真的增加」判定）
     h+=`<div style="font-size:12px;color:var(--tx2);margin-bottom:8px"><b>附件：</b>`
@@ -1826,26 +1932,23 @@ function caseTimeline(c){
         <div class="step-body"><div class="pre pre-full">${esc(ctn)||'(空)'}</div></div>
       </div>`;
     }else if(st.type==='auto_confirm'){
-      // 平台自动确认：位置按消息段近似（会话日志没有步骤级时间戳），带「近似」角标与悬停说明
-      const firstLine=(st.text||'').split('\n')[0];
-      const tip=`触发方式：${st.mode||'未知'}${st.q?'（题 '+st.q+'）':''}\n`
-        +`归属来源：${st.attribution==='session'?'按会话归属（驱动点击时记录）':'时间窗回退（事件无会话标识，旧数据）'}\n`
-        +`位置精度：消息级近似 —— 会话日志只记录消息时间戳，步骤级时间未记录\n`
-        +(st.anchor?`锚定消息时间：${st.anchor}`:'无时间锚，已置于时间线末尾');
+      /* 平台自动确认（选项卡作答）：展开后只回答两个问题 ——
+         「问的是什么」与「点了哪个答案」。
+         触发方式 / 按钮 class / 位置精度 / 归属来源都是实现细节，
+         看时间轴的人不需要知道，早先那几行悬停说明已整体删除。
+         旧轮次事件没有 question 字段 → 回退为只显示题号。 */
+      const ans=String(st.text||'').trim();
+      const title=String(st.question||'').trim();
+      const head=title || (st.q?`第 ${st.q} 题`:'自动确认');
       h+=`<div class="step confirm"><span class="dot"></span>
         <div class="step-head" onclick="this.parentNode.classList.toggle('open')">
           <span class="t-type">确认</span>
-          <span class="t-name">${esc(st.label||'自动确认')}</span>
+          <span class="t-name">${esc(head.length>72?head.slice(0,72)+'…':head)}</span>
           ${st.time?`<span class="mono">${esc(st.time)}</span>`:''}
-          ${st.approximate?`<span class="badge b-approx" title="${esc(tip)}">近似</span>`:''}
-          <span class="t-name" style="font-weight:400;color:var(--tx2)">${esc(firstLine).slice(0,40)}${(st.text||'').length>40?'…':''}</span>
         </div>
         <div class="step-body">
-          <div class="kv"><b>触发方式</b><span class="pre">${esc(st.mode||'')}</span></div>
-          <div class="kv"><b>按钮文本</b><span class="pre pre-full">${esc(st.text)||'(空)'}</span></div>
-          ${st.q?`<div class="kv"><b>题号</b><span class="pre">${esc(st.q)}</span></div>`:''}
-          <div class="kv"><b>归属</b><span class="pre pre-full">${st.attribution==='session'?'按会话归属（驱动在点击那一刻记录会话目录）':'时间窗回退（事件无会话标识，旧数据或非驱动来源）'}</span></div>
-          <div class="kv"><b>位置精度</b><span class="pre pre-full">消息级近似 —— 会话日志只记录消息时间戳，步骤级时间未记录${st.anchor?`；本条锚定消息时间 ${esc(st.anchor)}`:'；本条无时间锚，已置于时间线末尾'}</span></div>
+          ${title?`<div class="kv"><b>问题</b><span class="pre pre-full">${esc(title)}</span></div>`:''}
+          <div class="kv"><b>操作</b><span class="pre pre-full">${esc(confirmAction(st))}</span></div>
         </div>
       </div>`;
     }else{
@@ -1921,13 +2024,13 @@ function bugsTab(m,d){
 
   let h='<div class="case-chips">'+cases.map((x,i)=>
       `<span class="chip-c ${i===currentCase?'active':''}" onclick="pickCase(${i})">${esc(x.case_id)} ${esc(x.name)} ${x.status==='PASS'?'✓':x.status==='FAIL'?'✗':'⚠'}</span>`).join('')+'</div>'
-    +`<div style="font-size:12.5px;margin-bottom:12px"><b>提示词：</b>${esc(c.prompt)}</div>`;
+    +`<div style="font-size:12.5px;margin-bottom:12px"><b>提问：</b>${esc(c.prompt)}</div>`;
 
   if(!rows.length){
     return h+`<div class="none-banner">
-      <div class="big">✓ 该用例未发现问题</div>
-      <div class="sm">已按全部硬性缺陷规则检查该用例的调用链路（工具调用失败、死循环、重复调用、
-      内容截断、必填参数为空、链路一致性、会话收尾等），未命中任何规则。</div></div>`;
+      <div class="big">✓ 没有发现问题</div>
+      <div class="sm">已按全部硬性缺陷规则逐条检查本次调用链路（工具调用失败、死循环、重复调用、
+      内容截断、必填参数为空、调用链自洽、会话收尾等），一条都没命中。</div></div>`;
   }
 
   for(const f of rows){
@@ -1937,9 +2040,9 @@ function bugsTab(m,d){
         <b style="font-size:12.5px">${esc(f.name)}</b>
         <span class="mono">${esc(f.rule)}</span>
         ${f.tool?`<span class="mono">${esc(f.tool)}</span>`:''}
-        ${f.step_index!=null?`<span class="mono" style="color:var(--tx3)">步骤 #${f.step_index}</span>`:''}
+        ${f.step_index!=null?`<span class="mono" style="color:var(--tx3)">第 ${f.step_index} 步</span>`:''}
       </div>
-      <div class="f-detail"><b>具体表现：</b>${esc(f.detail)}</div>
+      <div class="f-detail"><b>表现：</b>${esc(f.detail)}</div>
       ${f.impact?`<div class="f-impact"><b>影响：</b>${esc(f.impact)}</div>`:''}
       ${f.evidence?`<div class="evi">${esc(f.evidence)}</div>`:''}
       ${f.repro?reproHtml(f.repro):''}
@@ -1948,13 +2051,13 @@ function bugsTab(m,d){
   return h;
 }
 function reproHtml(r){
-  let h=`<div class="repro"><b>稳定复现方法</b>
+  let h=`<div class="repro"><b>怎么复现</b>
     <div style="margin-top:5px" class="pre">${esc(r.prompt)}</div>
     <div style="margin-top:5px"><b>验证标准：</b>${esc(r.verify_desc)}</div>
     <div><b>预期：</b>${esc(r.expected)}</div>
     <div><b>实际：</b>${esc(r.actual)}</div>`;
   if(r.attempts){
-    h+=`<div style="margin-top:5px"><b>自动化验证：</b>${r.hits}/${r.attempts} =
+    h+=`<div style="margin-top:5px"><b>自动验证：</b>${r.hits}/${r.attempts} 次命中 =
       <b style="color:var(--accent)">${fmtPct(r.rate)}</b> ${esc(r.stability||'')}</div>`;
   }
   return h+'</div>';
@@ -1988,28 +2091,28 @@ function evCols(sm){
   return (Array.isArray(cs)&&cs.length)?cs:EV_COLS_FALLBACK;
 }
 /* 维度单元格 hover（评分标准）：回答「这一项是什么、按什么档位判、谁给的分」。
-   只放标准与口径，不放本次结果 —— 结果理由在 dimWhyTip（分数单元格 hover）里。
-   分开的理由：混在一起时，最该先看到的「为什么扣分」会被整段锚点顶到后面。 */
+   只放标准，不放本次结果 —— 结果理由在 dimWhyTip（分数单元格 hover）里。
+   分开的理由：混在一起时，最该先看到的「为什么扣分」会被整段评分标准顶到后面。 */
 function dimStdTip(s){
   const r=EV_RUBRIC[s.key]||{};
   const anchors=r.anchors||{};
-  // 新口径（有 nature）basis 是「分值来源」；历史产物的 basis 是「维度性质」，
-  // 必须分别解释 —— 用新语义去解释旧数据会误导（把本地公式分说成硬规则覆盖）。
+  // 新版产物（有 nature）basis 表示「分值来源」；旧版表示「维度性质」，
+  // 必须分别解释 —— 用新语义解释旧数据会把本地公式分说成硬规则覆盖。
   const isNew=(s.nature!==undefined);
   const src=isNew
-    ? '分值来源：'+((s.basis==='objective')?'硬规则（安全红线覆盖模型判定）'
+    ? '分值来源：'+((s.basis==='objective')?'硬规则（安全红线，覆盖模型判定）'
                    :(s.score==null?'未评分':'模型判定'))
-    : '判定来源：'+((EV_BASIS[s.basis]||s.basis||'')+'（历史口径）');
+    : '分值来源：'+((EV_BASIS[s.basis]||s.basis||'')+'（旧数据）');
   const lines=[(r.label||s.label||'')+'（'+src+'）'];
-  // 锚点由后端随产物下发（rubric_meta）；旧产物没有该字段 → 不显示空的「档位」标题
+  // 各档位说明由后端随产物下发；旧产物没有该字段 → 不显示空标题
   const ks=Object.keys(anchors).sort((a,b)=>Number(b)-Number(a));
   if(ks.length){
-    lines.push('评分标准（档位锚点）：');
+    lines.push('评分标准：');
     ks.forEach(k=>lines.push('  '+anchors[k]));
   }
-  if(r.how) lines.push('判定方式：'+r.how);
+  if(r.how) lines.push('怎么判的：'+r.how);
   if(r.always)
-    lines.push('适用性：跨场景恒评（与教学 / 非教学无关；无可视产物时由本地判不适用）');
+    lines.push('适用范围：所有场景都评（与教学 / 非教学无关；没有可视产物时本地直接判不适用）');
   return lines.join('\n');
 }
 /* 分数单元格 hover（判定理由）：回答「这次为什么是这个分」。
@@ -2022,9 +2125,9 @@ function dimWhyTip(s){
   if(s.score!=null&&why)
     lines.push((Number(s.score)>=5?'判定理由：':'未满分原因：')+cut(why,300));
   if(s.hint!=null&&s.score!=null&&Math.abs(s.score-s.hint)>=0.05)
-    lines.push(`本地参考值 ${s.hint}（同口径确定性算法算出，仅作对比，最终以模型判定为准）`);
-  if(s.na_reason) lines.push('本轮未评分原因：'+s.na_reason);
-  if(!lines.length) lines.push('本次无可展示的判定理由');
+    lines.push(`本地算出的参考分 ${s.hint}（同一套算法得出的确定值，只作对比，最终以模型判定为准）`);
+  if(s.na_reason) lines.push('本轮不评分的原因：'+s.na_reason);
+  if(!lines.length) lines.push('本次没有可展示的判定理由');
   return lines.join('\n');
 }
 /* 产物清单（美观度行「查看产物」用）：优先 cases[].artifacts（带 abs_path），
@@ -2048,7 +2151,7 @@ function evArtBtn(p){
   if(!p) return '';
   const tip='产物：'+p.names.join('、')
     +(p.ok.length?`\n点击在${FM_NAME()}中显示：${p.ok[0].abs}`
-                 :'\n本机未找到产物文件（按工作区解析不到绝对路径）');
+                 :'\n本机没找到产物文件（按工作区解析不出绝对路径）');
   if(!p.ok.length)
     return `<span class="evt-art disabled" title="${esc(tip)}">查看产物</span>`;
   return `<a class="evt-art" href="#" data-path="${esc(p.ok[0].abs)}" title="${esc(tip)}"`
@@ -2070,7 +2173,7 @@ function evCell(a, c){
   const name=`<span class="evt-name" title="${esc(dimStdTip(a))}">${esc(a.label)}${tag}</span>`;
   const why=esc(dimWhyTip(a));
   const drift=(a.score!=null&&a.hint!=null&&Math.abs(a.score-a.hint)>=0.05)
-    ? `<span class="evt-n" title="本地参考值 ${a.hint}：同口径确定性算法算出的均值，仅供对比">参考 ${a.hint}</span>`:'';
+    ? `<span class="evt-n" title="本地算出的参考分 ${a.hint}：同一套算法得出的确定值，只作对比">参考 ${a.hint}</span>`:'';
   const cv=a.score==null
     ? `<span class="evt-na" title="${why}">—`
       +(a.na_reason?`<i>${esc(a.na_reason.length>14?a.na_reason.slice(0,14)+'…':a.na_reason)}</i>`:'')+'</span>'
@@ -2107,14 +2210,14 @@ function evCaseTable(c,i,sm){
   t+='<tfoot><tr>'+cols.map((col,j)=>{
     const vals=byCol[j].filter(d=>d.score!=null).map(d=>d.score);
     const m=vals.length?Math.round(vals.reduce((x,y)=>x+y,0)/vals.length*10)/10:null;
-    const tip=`${col.label} 在本用例 ${vals.length} 项已评分指标上的均分（不跨用例聚合）`;
+    const tip=`${col.label} 在本用例已评分的 ${vals.length} 项指标上的平均分（不跨用例合并）`;
     return `<td class="evt-total" title="${esc(tip)}">维度均分 `
       +(m!=null?`<b>${m}</b>`:'<span style="color:var(--tx3)">—</span>')+'</td>';
   }).join('')+'</tr></tfoot></table>';
   const je=String(c.judge_error||'');
   const meta=[];
-  // 未分类用例按「结果质量」评（口径见 core/eval_rubric.applicable_dimensions），
-  // 这里必须写清是默认口径，否则会被误读成教学 / 非教学结论
+  // 未分类用例按「结果质量」评（判定规则见 core/eval_rubric.applicable_dimensions），
+  // 这里必须写清这是默认规则，否则会被误读成教学 / 非教学结论
   const sceneLbl=c.scene?((c.scene_kind==='teaching'?'教学·':'')+c.scene)
     :'未分类（默认按结果质量评）';
   meta.push(`<span class="ver">${esc(sceneLbl)}`
@@ -2127,20 +2230,20 @@ function evCaseTable(c,i,sm){
         ?`<span class="mono">${c.requirement_kinds.map(esc).join('、')}</span>`
         :'无（未要求交付产物）')
       +((c.requirement_source==='inferred')?'（按原文推断）':'')+'</span>');
-  if(je) meta.push(`<span class="pill bad" title="${esc(je)}">判分失败</span>`);
+  if(je) meta.push(`<span class="pill bad" title="${esc(je)}">打分失败</span>`);
   if(c.degraded_input) meta.push(`<span class="pill warn" title="${esc(c.input_note||'')}">降级输入</span>`);
   // 判分依据留档：默认折叠，展开可核对「模型当时看到了什么」（含本地参考值）
   const factsBox=c.objective_facts
     ?`<div class="ev-facts" onclick="this.classList.toggle('open')">`
-      +`<div class="ev-facts-hd">模型收到的客观事实（判分依据）`
+      +`<div class="ev-facts-hd">模型收到的客观事实（打分依据）`
       +`<span class="ev-facts-tip">点击展开 / 收起</span></div>`
       +`<pre class="pb-detail">${esc(JSON.stringify(c.objective_facts,null,1))}</pre></div>`:'';
   return `<div class="card ev-case">
     <div class="ev-case-hd">
       <div class="ev-case-tt"><b style="font-size:12.5px">${esc(c.case_id)}</b>
-        <span class="ev-case-prompt" title="${esc(c.prompt||'')}">${esc(clip(c.prompt||'（无提示词）',78))}</span></div>
+        <span class="ev-case-prompt" title="${esc(c.prompt||'')}">${esc(clip(c.prompt||'（没有提问）',78))}</span></div>
       <div class="ev-case-meta">${meta.join('')}</div>
-      ${je?`<div class="ev-case-err">判分失败根因：${esc(je)}`
+      ${je?`<div class="ev-case-err">打分失败的原因：${esc(je)}`
         +(c.judge_raw?`<div class="pb-detail">${esc(c.judge_raw)}</div>`:'')+'</div>':''}
     </div>${t}${factsBox}</div>`;
 }
@@ -2153,18 +2256,18 @@ function evalTab(){
 }
 function evEmpty(){
   return `<div class="empty" style="padding:24px 0">
-    <div style="font-size:13px;color:var(--tx2);margin-bottom:12px">该轮次尚未做质量评估</div>
+    <div style="font-size:13px;color:var(--tx2);margin-bottom:12px">该轮次还没有做质量评估</div>
     <div class="note" style="max-width:660px;margin:0 auto 16px;text-align:left">
-      评估会调用「模型设置」中配置的模型，逐用例按 20 项指标判分：教学问题评「教学专业质量」，
-      非教学与**未分类**用例评「结果质量」（未分类是默认口径）；「安全与可靠」与
-      「系统与 Agent 能力」两类都评；美观度归结果质量列、不分场景恒评。
-      其中安全红线、执行成功率、自纠正、任务完成率、交付效率、产物类型与格式覆盖率会由日志算出
-      <b>客观事实</b>，随请求发给模型作为判分依据（任务完成率只看最终回复是否被截断、
-      以及用户要求的产物是否真的产出，如「生成 PPT」→ 看产物里有没有 pptx；
-      不看内容是否切题、是否拒绝回答）。
-      每个用例一张三列评分表：<b>结果质量 / 教学专业质量 · 安全与可靠 · 系统与 Agent 能力</b>，
-      行=指标，单元格=本用例分值，表尾附本用例各维度均分；
-      悬停<b>指标名</b>看评分标准，悬停<b>分数</b>看判定理由。
+      评估会调用「模型设置」里配置的模型，逐条用例按 20 项指标打分。
+      教学类问题看「教学专业质量」，非教学和未分类的看「结果质量」（未分类按结果质量算）；
+      「安全与可靠」「系统与 Agent 能力」两类都评；美观度算在结果质量里，不分场景。
+      其中安全红线、执行成功率、自纠正、任务完成率、交付效率、产物类型与格式覆盖率由日志直接算出
+      <b>客观事实</b>，随请求一起发给模型作为打分依据（任务完成率只看最终回复有没有被截断、
+      以及要求的产物是不是真的产出了，比如「生成 PPT」就看产物里有没有 pptx；
+      不判断内容是否切题、是否拒绝回答）。
+      每条用例一张三列评分表：<b>结果质量 / 教学专业质量 · 安全与可靠 · 系统与 Agent 能力</b>，
+      行是指标，单元格是该用例的分值，表尾给出这条用例各维度的平均分；
+      把鼠标停在<b>指标名</b>上看评分标准，停在<b>分数</b>上看打分理由。
     </div>
     <button class="btn-primary" onclick="startEval()">开始评估</button></div>`;
 }
@@ -2191,23 +2294,22 @@ function evAlert(sm){
   const reasons=errs.slice(0,2).map(e=>esc(e.reason||'')+(e.count>1?`（${e.count} 条）`:'')).join('<br>');
   let tip='';
   if(/403|allowlist|白名单|Source IP|来源 IP/i.test(raw))
-    tip='请在模型供应商控制台把该来源 IP 加入 API Key 的白名单（出口 IP 可能变化，必要时按 CIDR 放行）。';
+    tip='请到模型供应商控制台，把这个来源 IP 加进 API Key 白名单（出口 IP 可能会变，必要时按网段放行）。';
   else if(/未配置模型名/.test(raw))
-    tip='请在「模型设置」中填写模型名或端点 ID 后再评估。';
+    tip='请先在「模型设置」里填好模型名或端点 ID，再重新评估。';
   else if(/模型输出无法解析/.test(raw))
-    tip='模型返回的不是合法 JSON：可调高 config.yaml 中 llm.max_tokens 后重试。';
+    tip='模型返回的不是合法 JSON：可以把 config.yaml 里的 llm.max_tokens 调大后重试。';
   return `<div class="ev-alert">
-    <div class="ev-alert-hd">⚠ 本轮评估不完整${failed?`：${failed} 条用例判分失败`:''}</div>
+    <div class="ev-alert-hd">⚠ 本轮评估不完整${failed?`：${failed} 条用例打分失败`:''}</div>
     <div class="ev-alert-bd">
-      ${zero?`<div>送模型的维度 <b>0 / ${exp}</b> 项拿到分值 —— 本轮综合分只剩硬规则分值，<b>不代表模型判定结果</b>。</div>`:''}
+      ${zero?`<div>交给模型打分的 <b>0 / ${exp}</b> 项拿到了分值 —— 本轮只剩硬规则的分，<b>不代表模型判定结果</b>。</div>`:''}
       ${reasons?`<div class="mono">${reasons}</div>`:''}
       ${tip?`<div>${tip}</div>`:''}
     </div></div>`;
 }
-/* 公式与口径只供「成本与效率」等仍需要综合分的内部计算使用；
-   本轮测试综合分模块已删除；跨用例均分一并取消 —— 每张逐用例表的表尾
-   只给本用例自己的维度均分。后端仍按原口径落盘 overall_score_100 /
-   overall_normalized / column_means，供 API 消费者与历史产物自解释；界面不再展示。 */
+/* 后端仍会按原规则落盘 overall_score_100 / overall_normalized / column_means，
+   供接口调用方与旧产物自解释；界面上不再展示综合分（已下线），
+   每张逐用例表的表尾只给该用例自己的维度平均分。 */
 function evResult(ev){
   const sm=ev.summary||{}, cases=ev.cases||[];
   // 指标元信息（旧产物没有该字段 → 空对象，hover 只显示分值标签，不报错）
@@ -2223,7 +2325,7 @@ function evResult(ev){
     +errs.slice(0,3).map(e=>esc((e.case_id||'')+' '+(e.error||''))).join('；')+'</div>';
   // 每个用例一张三列评分表：行=指标，单元格=本用例分值，表尾=本用例各维度均分
   h+='<h3 class="sec">逐用例评分'
-    +'<span class="gr-hint">悬停任一指标可查看判定标准与判定方式；每张表末行附本用例各维度均分</span></h3>';
+    +'<span class="gr-hint">鼠标停在指标名上看评分标准，停在分数上看打分理由；每张表最后一行是该用例各维度的平均分</span></h3>';
   cases.forEach((c,i)=>{ h+=evCaseTable(c,i,sm); });
   h+='<h3 class="sec" style="margin-top:16px">成本与效率</h3>'+evCost(ev);
   return h;
@@ -2238,12 +2340,12 @@ function evCost(ev){
     +`<tr><td>被测智能体 token 估算（输入 / 输出）</td><td style="text-align:right"><b>${tin} / ${tout}</b></td></tr>`
     +`<tr><td>评估总耗时</td><td style="text-align:right"><b>${ev.elapsed_s??'—'}s</b></td></tr>`
     +'</table></div>'
-    +'<div class="note" style="margin-top:8px">被测智能体 token 为字符量折算估算（日志未记录官方 usage）；评审模型 token 来自接口返回的 usage。</div>';
+    +'<div class="note" style="margin-top:8px">被测智能体的 token 是按字符量折算估出来的（日志里没有官方 usage）；评审模型的 token 来自接口返回的 usage。</div>';
 }
 async function startEval(){
   const j=lastRoundData||{}; if(!j.run_id) return;
   if(!LLM_SRV.configured){
-    alert('尚未配置模型：请先在「模型设置」填写供应商地址、API Key 与模型名，并通过「测试连接」。');
+    alert('还没有配置模型：请先在「模型设置」里填好供应商地址、API Key 和模型名，并通过「测试连接」。');
     return;
   }
   try{
@@ -2298,6 +2400,7 @@ renderRound=function(data){ lastRoundData=data; _renderRound(data); };
   // 不能中断后面的步骤（否则环境选择器等会静默失效，且毫无提示）
   const step=async fn=>{ try{ await fn(); }catch(e){ console.error('init step failed:', e); } };
   await step(loadLLM);
+  await step(loadAutoClick);  // 自动点击开关的初始值来自 config.yaml
   await step(loadUploads);  // 附件库：用例行的「库(n)」计数与库列表都依赖它
   step(refreshEvalStatus).then(s=>{ if(s && s.running) pollEval(); });
   step(renderCases);

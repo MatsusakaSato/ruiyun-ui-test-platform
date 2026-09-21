@@ -24,6 +24,42 @@ from drivers.cdp import (
 DENY_WORDS = ("拒绝", "取消", "关闭", "停止", "终止")
 
 
+# ------------------------------------------------------------------ 控制台文案
+# 控制台是给用户看的，不是模块内部日志：前缀统一成 [应用] / [确认]，
+# 不再出现 [ui_driver]、[auto-confirm] 这类模块名与 mode / cls 之类的内部字段。
+
+# 自动确认动作 → 大白话（与 core/trajectory.CONFIRM_MODE_LABEL 同口径）
+CONFIRM_ACTION_CN = {
+    "qcard-option": "选中选项",
+    "qcard-confirm": "确认本题",
+    "qcard-submit": "提交",
+    "qcard-fill": "填写自定义答案",
+    "keyword": "确认授权",
+    "first-option": "确认首个选项",
+}
+
+
+def cite_line(mode: str, q: str = "", question: str = "", answer: str = "",
+              extra: str = "") -> str:
+    """拼一条「确认」日志：题号与题干只说一次，答案跟在后面。
+
+    形态：[确认] 12:03:41 第 1/4 题 · 选中选项 · 选项文字 —— 题干……
+    题干缺失（旧数据 / 未能读到标题）时退化为只报题号，不显示空占位。
+    """
+    label = CONFIRM_ACTION_CN.get(str(mode or ""), str(mode or "自动确认"))
+    head = f"第 {q} 题" if q else label
+    body = " · ".join(x for x in (label if q else "", answer) if x)
+    if question:
+        body = f"{body} —— {question}" if body else question
+    if extra:
+        body = f"{body}（{extra}）" if body else f"（{extra}）"
+    return f"[确认] {time.strftime('%H:%M:%S')} {head}" + (f" {body}" if body else "")
+
+
+def cite_emit(text: str) -> None:
+    print(text, flush=True)
+
+
 # 输入框候选选择器（按优先级）
 INPUT_SELECTORS = [
     "textarea",
@@ -170,14 +206,14 @@ class RuiyunUIDriver:
         """
         profile = str(self.cfg.get("app", {}).get("env_profile") or "").strip()
         if not profile:
-            return "(未启用，遵循进程既有环境)"
+            return "(未指定环境，沿用当前进程已有的环境变量)"
         pairs = (self.cfg.get("app", {}).get("env_profiles") or {}).get(profile) or {}
         applied = 0
         for k, v in pairs.items():
             if k not in env:            # 显式设置过的变量不覆盖
                 env[k] = str(v)
                 applied += 1
-        return f"{profile}（注入 {applied} 个变量，已有 {len(pairs) - applied} 个被显式环境保留）"
+        return f"{profile}（注入 {applied} 个变量，另 {len(pairs) - applied} 个已被现有环境占用）"
 
     def is_up(self) -> bool:
         return bool(list_targets(self.port))
@@ -209,7 +245,7 @@ class RuiyunUIDriver:
         profile_desc = self._apply_env_profile(env)   # 启动即切环境（默认 dev）
         self.env_profile_desc = profile_desc
         if self.cfg.get("app", {}).get("log_env_profile", True):
-            print(f"[ui_driver] 环境档案: {profile_desc}", flush=True)
+            print(f"[应用] 启动环境：{profile_desc}", flush=True)
 
         # 端口不通但应用进程还在 → 那是「没有调试端口」的实例（用户从开始菜单/自启动
         # 拉起的）。Electron 是单实例应用：此时直接 Popen 新进程，argv 会被转交给旧
@@ -221,12 +257,12 @@ class RuiyunUIDriver:
         stale = self._running_app_pids()
         if stale:
             if not self.restart_if_no_port:
-                print(f"[ui_driver] ✗ 应用已在运行但没有调试端口（pid {stale}），"
-                      "而 app.restart_if_no_debug_port=false：请先在界面点"
-                      "「✕ 关闭实例」再运行测试", flush=True)
+                print(f"[应用] 应用已在运行，但没有调试端口（pid {stale}），"
+                      "而配置里禁止自动重启：请先在界面点「✕ 关闭实例」，再运行测试",
+                      flush=True)
                 return False
-            print(f"[ui_driver] 检测到 {len(stale)} 个应用进程但没有调试端口"
-                  f"（pid {stale}）—— 先关闭再以调试模式启动", flush=True)
+            print(f"[应用] 发现 {len(stale)} 个已运行的应用实例（缺少调试端口），"
+                  "先关闭再以调试模式启动", flush=True)
             self._kill_running_apps()
 
         self.proc = self._spawn(args, env)
@@ -239,7 +275,7 @@ class RuiyunUIDriver:
             # 于是这一发同样被单实例吞掉。关掉它再重试一次（只重试一次）。
             again = self._running_app_pids()
             if again:
-                print(f"[ui_driver] 新进程被单实例吞掉（code={self.proc.returncode}），"
+                print(f"[应用] 新进程被已有实例接管并退出（code={self.proc.returncode}），"
                       f"关闭 {len(again)} 个已有实例后重试一次…", flush=True)
                 self._kill_running_apps()
                 self.proc = self._spawn(args, env)
@@ -316,15 +352,15 @@ class RuiyunUIDriver:
             else:
                 subprocess.run(["pkill", "-x", name], capture_output=True, timeout=20)
         except Exception as exc:
-            print(f"[ui_driver] 关闭已有实例失败：{type(exc).__name__}: {exc}", flush=True)
+            print(f"[应用] 关闭已有实例失败：{type(exc).__name__}: {exc}", flush=True)
         for _ in range(20):                     # 最多等 10s 优雅退出
             if not self._running_app_pids() and not self.is_up():
-                print("[ui_driver] 已有实例已关闭，调试端口可以重新绑定", flush=True)
+                print("[应用] 已有实例已关闭，可以重新启动", flush=True)
                 return
             time.sleep(0.5)
         graceful = False
 
-        print("[ui_driver] ⚠ 优雅关闭超时，改用强制结束（可能丢掉应用的登录态）", flush=True)
+        print("[应用] 关闭太慢，改用强制结束（可能丢掉应用的登录态）", flush=True)
         try:
             if sys.platform == "win32":
                 subprocess.run(["taskkill", "/F", "/T", "/IM", name],
@@ -333,13 +369,13 @@ class RuiyunUIDriver:
                 subprocess.run(["pkill", "-9", "-x", name],
                                capture_output=True, timeout=20)
         except Exception as exc:
-            print(f"[ui_driver] 强制结束失败：{type(exc).__name__}: {exc}", flush=True)
+            print(f"[应用] 强制结束失败：{type(exc).__name__}: {exc}", flush=True)
         for _ in range(20):
             if not self._running_app_pids() and not self.is_up():
-                print("[ui_driver] 已有实例已强制结束", flush=True)
+                print("[应用] 已有实例已强制结束", flush=True)
                 return
             time.sleep(0.5)
-        print("[ui_driver] ⚠ 已有实例仍未完全退出，仍继续尝试启动", flush=True)
+        print("[应用] 已有实例还没完全退出，仍继续尝试启动", flush=True)
         del graceful
 
     def _report_launch_failure(self) -> None:
@@ -350,15 +386,14 @@ class RuiyunUIDriver:
             code = self.proc.poll() if self.proc else None
             alive = self._running_app_pids()
             if code is not None:
-                hint = (f"新进程已退出（code={code}）：Electron 单实例把启动参数转交给了"
-                        "已在运行的实例，调试端口因此不会打开")
+                hint = (f"新进程已退出（code={code}）：应用是单实例的，启动参数被交给了"
+                        "已在运行的实例，所以调试端口不会打开")
             elif alive:
-                hint = (f"新进程仍在运行、但端口 {self.port} 未就绪；当前有 {len(alive)} 个"
-                        "应用进程 —— 可能是安全软件拦截了 --remote-debugging-port，"
-                        "或该端口已被别的程序占用")
+                hint = (f"新进程还在运行，但端口 {self.port} 没就绪；当前有 {len(alive)} 个"
+                        "应用进程 —— 可能是安全软件拦截了调试端口，或该端口被别的程序占用")
             else:
                 hint = "应用进程不存在：启动参数或可执行文件路径有问题"
-        print(f"[ui_driver] ✗ 调试端口 {self.port} 在 {self.launch_timeout:.0f}s 内未就绪 —— {hint}",
+        print(f"[应用] 等待 {self.launch_timeout:.0f}s，调试端口 {self.port} 仍未就绪 —— {hint}",
               flush=True)
 
     def attach(self, timeout_s: Optional[float] = None) -> bool:
@@ -396,10 +431,10 @@ class RuiyunUIDriver:
         # ① 应用还停在外壳页/登录页 ② 端口被别的程序占用（端口号撞车）。
         # 这两种情况的处理方式完全不同，日志必须能区分。
         tgts = list_targets(self.port)
-        print(f"[ui_driver] ✗ {wait_s:.0f}s 内没有可用的主界面页面"
-              f"（端口 {self.port} 上共 {len(tgts)} 个目标）", flush=True)
+        print(f"[应用] 等待 {wait_s:.0f}s，仍没有可用的主界面"
+              f"（调试端口上共 {len(tgts)} 个页面）", flush=True)
         for t in tgts[:8]:
-            print("    type={:8s} url={}  title={}".format(
+            print("    {:<8s} {}  {}".format(
                 str(t.get("type")), (t.get("url") or "")[:90],
                 (t.get("title") or "")[:40]), flush=True)
         return False
@@ -672,9 +707,8 @@ class RuiyunUIDriver:
             raise RuntimeError(
                 f"文本未写入输入框（当前内容 {landed[:40]!r}），已中止发送；"
                 f"现场已导出 {info['path']}：{info['summary']}")
-        print("[ui_driver] ⚠ 文本经「DOM 直写」兜底写入：应用自身的编辑管线没有生效，"
-              "若发送按钮仍为禁用态，本次发送会失败（详见随后的 composer 状态）",
-              flush=True)
+        print("[应用] 文本是靠「直接改写页面内容」写进去的：应用自身的输入逻辑没有生效，"
+              "如果发送按钮一直是灰的，这次发送会失败", flush=True)
         self._input_selector = None   # 视图切换后重新定位更稳妥
 
     # ------------------------------------------------------------ 附件投递
@@ -1150,13 +1184,13 @@ class RuiyunUIDriver:
     def _confirm_fail(self, msg: str) -> None:
         """记一次自动确认失败；连续失败达到上限 → 停用并请求人工介入。"""
         self._confirm_cdp_streak += 1
-        print(f"[auto-confirm] ✗ 失败 {self._confirm_cdp_streak}/{self._CONFIRM_FAIL_LIMIT}: {msg}", flush=True)
+        cite_emit(f"[确认] 第 {self._confirm_cdp_streak} 次失败：{msg}")
         if self._confirm_cdp_streak >= self._CONFIRM_FAIL_LIMIT:
             self.auto_confirm = False
             self.confirm_human_needed = True
             self.confirm_human_sess = self._owner_sess()
-            print("[auto-confirm] ‼️ 连续 5 次失败，已停用自动确认 —— 请求人工介入："
-                  "请在应用界面手动点击确认卡片", flush=True)
+            cite_emit(f"[确认] 连续 {self._CONFIRM_FAIL_LIMIT} 次失败，已停用自动确认，"
+                      "需要你在应用界面手动点一下确认卡片")
 
     # 选项卡（agent-question-composer）专用探测：**一次往返取回全部事实**。
     #
@@ -1300,8 +1334,7 @@ class RuiyunUIDriver:
         self.auto_confirm = False
         self.confirm_human_needed = True
         self.confirm_human_sess = self._owner_sess()
-        print(f"[auto-confirm] ‼️ 选项卡{why} —— 已停用自动确认，请求人工介入："
-              "请在应用界面手动选择", flush=True)
+        cite_emit(f"[确认] {why}，已停用自动确认，需要你在应用界面手动选择")
 
     def _qcard_facts(self) -> Optional[dict]:
         """读一次卡片事实（只读、单次往返）；CDP 异常由调用方处理。"""
@@ -1345,9 +1378,11 @@ class RuiyunUIDriver:
         fp = self._qcard_fp(facts)
         self._qcard_fp_clicks[fp] = self._qcard_fp_clicks.get(fp, 0) + 1
         self._qcard_last_click = time.time()
+        q = str(facts.get("counter") or "")
+        question = str(facts.get("question") or "")[:150]
         if not res.get("ok"):
-            print(f"[auto-confirm] 选项卡点击未生效（{mode}，{res.get('reason')}）"
-                  f" @ 题 {facts.get('counter') or '?'}", flush=True)
+            cite_emit(cite_line(mode, q, question,
+                                extra=f"没点动：{res.get('reason')}"))
             return None
         self._qcard_card_clicks += 1
         ev = {
@@ -1356,14 +1391,14 @@ class RuiyunUIDriver:
             "cls": ("agent-question-option" if mode == "qcard-option"
                     else "agent-question-other" if mode == "qcard-fill"
                     else "agent-question-composer__primary"),
-            "q": facts.get("counter") or "",
+            "q": q,
+            # 题干原文：轮次详情展开这条记录时「问题是什么」就靠它。
+            # 旧产物没有该字段，前端回退为只显示题号。
+            "question": question,
             "sess": self._owner_sess(owner_sess),
         }
-        self.confirm_events.append(ev)     # 全流程留痕（沿用旧字段，dashboard/CI 不变）
-        label = {"qcard-option": "选中选项", "qcard-confirm": "确认本题（进入下一题）",
-                 "qcard-submit": "提交", "qcard-fill": "填写自定义答案"}.get(mode, mode)
-        print(f"[auto-confirm] {ev['time']} 选项卡[{ev['q']}] {label}: {ev['text']!r}",
-              flush=True)
+        self.confirm_events.append(ev)     # 全流程留痕（含题型/答案，供时间线还原）
+        cite_emit(cite_line(mode, q, question, answer=str(ev["text"] or "")))
         return ev
 
     def _qcard_handle(self, owner_sess=None) -> Optional[dict]:
@@ -1467,8 +1502,8 @@ class RuiyunUIDriver:
             self.auto_confirm = False
             self.confirm_human_needed = True
             self.confirm_human_sess = self._owner_sess(qcard_owner)
-            print(f"[auto-confirm] 累计点击已达 {self._confirm_max_clicks} 次，自动停用 —— "
-                  "请求人工介入：请在应用界面手动处理后续确认", flush=True)
+            cite_emit(f"[确认] 自动确认累计已达 {self._confirm_max_clicks} 次，已停用，"
+                      "需要你在应用界面手动处理后续确认")
             return None
         # 专用路径：agent-question-composer 选项卡（事件已在 _qcard_emit 内留痕）
         if not skip_qcard:
@@ -1525,8 +1560,8 @@ class RuiyunUIDriver:
             self.auto_confirm = False
             self.confirm_human_needed = True
             self.confirm_human_sess = self._owner_sess(qcard_owner)
-            print("[auto-confirm] ‼️ 同一选项卡片点击 5 次仍未消失 —— "
-                  "请求人工介入：请在应用界面手动处理", flush=True)
+            cite_emit("[确认] 同一个选项卡片点了 5 次仍未消失，已停用自动确认，"
+                      "需要你在应用界面手动处理")
             return None
 
         ev = {"time": time.strftime("%H:%M:%S"), "ts": time.time(),
@@ -1534,7 +1569,9 @@ class RuiyunUIDriver:
               "cls": info.get("cls", ""), "parentCls": info.get("parentCls", ""),
               "sess": self._owner_sess(qcard_owner)}
         self.confirm_events.append(ev)
-        print(f"[auto-confirm] {ev['time']} 自动点击（{ev['mode']}）: {ev['text']!r}", flush=True)
+        cite_emit(cite_line(str(info.get("mode") or ""),
+                            question=str(info.get("question") or ""),
+                            answer=str(ev["text"] or "")))
         time.sleep(0.8)        # 给 UI 反应时间
         return ev
 
@@ -1637,16 +1674,11 @@ class RuiyunUIDriver:
         # 0) 当前视图就有卡片 → 只在本机推进，不切换任何会话（切走即丢答案）
         try:
             cur = self._qcard_facts()
-        except Exception as exc:
-            print(f"[auto-confirm] 卡片探测异常（跳过本轮巡检）: "
-                  f"{type(exc).__name__}: {exc}", flush=True)
-            return 0
+        except Exception:
+            return 0          # 读不到卡片就静默跳过本轮，频繁报错只会刷屏
         if cur and cur.get("found"):
+            # 「本轮不切换会话」是实现细节，用户不需要知道；点了什么由 _qcard_emit 报
             ev = self._qcard_handle(owner_sess=self._qcard_view_sess)
-            if ev:
-                print(f"[auto-confirm] 视图巡检：选项卡独占视图，本轮机内推进"
-                      f"（{ev.get('mode')} @ 题 {ev.get('q') or '?'}），不切换会话",
-                      flush=True)
             return 1 if ev else 0
 
         items = self._sidebar_items()
@@ -1654,8 +1686,8 @@ class RuiyunUIDriver:
             self._cycle_fail_streak += 1
             if self._cycle_fail_streak >= 3:
                 self.view_cycle_disabled = True
-                print("[auto-confirm] ‼️ 连续 3 轮读不到会话列表 —— 停用视图巡检，"
-                      "退回仅当前视图扫描", flush=True)
+                cite_emit("[确认] 连续 3 轮读不到会话列表，已停用视图巡检，"
+                          "改为只扫描当前会话（后台会话的确认卡片可能因此被漏掉）")
             return 0
         self._cycle_fail_streak = 0
         self._cycle_visited = set()
@@ -1673,16 +1705,16 @@ class RuiyunUIDriver:
             if ev:
                 clicked += 1
             if self._qcard_owner_sess is not None:
-                print("[auto-confirm] 发现选项卡 → 锁定该会话视图，本轮不再切换其它会话"
-                      "（切换会重置卡片、丢失已选答案）", flush=True)
+                # 卡片必须留在可见会话里才能继续点（切走会重置成第 1 题），
+                # 故本轮到此为止；无需再打一行日志说明。
                 break
             # 授权卡等通用卡片：显式带上当前巡检会话，事件才不会串到别的用例
             ev = self._maybe_auto_confirm(skip_qcard=True, qcard_owner=sess)
             if ev:
                 clicked += 1
         if clicked:
-            print(f"[auto-confirm] 视图巡检：本轮实际切换 {len(self._cycle_visited)} 条会话，"
-                  f"点击确认 {clicked} 次", flush=True)
+            cite_emit(f"[确认] 本轮切换 {len(self._cycle_visited)} 条会话，"
+                      f"共确认 {clicked} 次")
         return clicked
 
     # ------------------------------------------------------------ 会话等待
@@ -1764,8 +1796,8 @@ class RuiyunUIDriver:
                         for s in last_change:
                             last_change[s] = time.time()
                 except Exception as exc:
-                    print(f"[auto-confirm] 视图巡检异常（跳过本轮）: "
-                          f"{type(exc).__name__}: {exc}", flush=True)
+                    # 巡检本身出错不该打断等待，但也不能静默吞掉 —— 只说「跳过了本轮」
+                    cite_emit(f"[确认] 本轮巡检出错已跳过：{type(exc).__name__}")
                 next_cycle = time.time() + cycle_s
             if self._maybe_auto_confirm() is not None:
                 # 点了确认 → 所有在途会话的静默计时重置
