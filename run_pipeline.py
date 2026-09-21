@@ -204,8 +204,22 @@ def run_ui_cases(cfg: dict, cases: list, driver) -> list:
                 # 回到「新建任务」首页：生成中的其他会话不受影响（已实测）
                 if not driver.reset_to_new_task():
                     res.ui_ok = False
-                    res.ui_error = "无法回到新建任务首页"
-                    _log("        ✗ 无法回到新建任务首页")
+                    # 失败原因必须可诊断：停在登录页 vs 组件没挂上，处理方式完全不同
+                    st = {}
+                    try:
+                        st = driver.page_state() or {}
+                    except Exception:
+                        st = {}
+                    if st.get("login_like"):
+                        res.ui_error = ("应用停留在登录页（页面存在登录/密码框）："
+                                        "请先在该应用内完成登录，再运行测试")
+                    else:
+                        res.ui_error = "无法回到新建任务首页"
+                    _log(f"        ✗ {res.ui_error}"
+                         f" | 页面 {st.get('href') or '?'}"
+                         f" | 新建任务按钮={st.get('has_new_task')}"
+                         f" 输入区={st.get('has_composer')}"
+                         f" | 正文 {st.get('body_head') or ''}")
                     res.elapsed_s = time.time() - t0
                     results.append(res)
                     continue
@@ -228,10 +242,23 @@ def run_ui_cases(cfg: dict, cases: list, driver) -> list:
                 how = driver.send()
                 sess = driver.wait_new_session(before, timeout_s=new_sess_timeout)
                 if not sess:
-                    res.ui_error = "发送后未产生新会话日志"
+                    # 未产生会话时把输入区现状一并打印：必须能区分「字没进去」与
+                    # 「字进去了但发送按钮不可点/没点到」，否则只剩一句笼统的失败。
+                    st = {}
+                    try:
+                        st = driver.composer_state() or {}
+                    except Exception:
+                        st = {}
+                    res.ui_error = (
+                        "发送后未产生新会话日志"
+                        + (f"（发送方式 {how}；输入框 {st.get('text_len')} 字，"
+                           f"发送按钮 {st.get('send_button') or '未找到'}）" if st else ""))
                     res.elapsed_s = time.time() - t0
                     results.append(res)
-                    _log("        ✗ 未产生新会话")
+                    _log(f"        ✗ 未产生新会话 | 发送方式 {how} | 输入框 "
+                         f"{st.get('text_len', '?')} 字、发送按钮 "
+                         f"{st.get('send_button') or '未找到'}"
+                         f"（选择器 {st.get('input_selector') or '未定位到输入框'}）")
                     continue
 
                 res.session_id = sess.name
@@ -244,6 +271,17 @@ def run_ui_cases(cfg: dict, cases: list, driver) -> list:
                 res.ui_ok = False
                 res.ui_error = f"{type(exc).__name__}: {exc}"
                 _log(f"        ✗ UI 异常: {res.ui_error}")
+                # 输入相关的异常一律补一份页面现状：登录页 / 组件未挂载 / 选择器失效
+                # 在界面上看起来都是「发不出去」，必须能区分
+                if "输入框" in str(exc) or "未写入" in str(exc):
+                    try:
+                        st = driver.page_state() or {}
+                        _log(f"          页面 {st.get('href') or '?'}"
+                             f" | 登录页={st.get('login_like')}"
+                             f" | 输入区={st.get('has_composer')}"
+                             f" | 正文 {st.get('body_head') or ''}")
+                    except Exception:
+                        pass
                 res.elapsed_s = time.time() - t0
                 results.append(res)
 

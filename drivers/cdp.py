@@ -128,15 +128,31 @@ class CDPSession:
         self.call("Input.insertText", {"text": text}, timeout=15)
 
     def press_key(self, key: str = "Enter", code: str = "Enter",
-                  windows_vk: int = 13, native_vk: int = 13) -> None:
-        for ktype in ("keyDown", "keyUp"):
-            self.call("Input.dispatchKeyEvent", {
-                "type": ktype,
-                "key": key,
-                "code": code,
-                "windowsVirtualKeyCode": windows_vk,
-                "nativeVirtualKeyCode": native_vk,
-            }, timeout=10)
+                  windows_vk: int = 13, native_vk: int = 13,
+                  text: str = "") -> None:
+        """按键：rawKeyDown →（有文本时）char → keyUp。
+
+        为什么必须显式发 char：CDP 的 keyDown 在 text 为空时等价于 rawKeyDown，
+        Chromium **不会**合成 keypress / beforeinput —— 只监听 keydown 的应用能收到，
+        靠 keypress / beforeinput / textInput 提交的应用则完全收不到。
+        这正是「回车发不出去、但界面上文本明明在输入框里」的一类成因，
+        且在 Windows 的新版构建上比 macOS 更容易踩到（键位映射与编辑管线不同）。
+
+        keyDown 用 rawKeyDown（显式表示「不合成字符」）+ 独立的 char：
+        这样无论如何都只产生一次字符事件，不会重复提交。
+        """
+        base = {
+            "key": key,
+            "code": code,
+            "windowsVirtualKeyCode": windows_vk,
+            "nativeVirtualKeyCode": native_vk,
+        }
+        self.call("Input.dispatchKeyEvent", {**base, "type": "rawKeyDown"}, timeout=10)
+        if text:
+            self.call("Input.dispatchKeyEvent",
+                      {**base, "type": "char", "text": text,
+                       "unmodifiedText": text}, timeout=10)
+        self.call("Input.dispatchKeyEvent", {**base, "type": "keyUp"}, timeout=10)
 
 
 def pick_page_target(targets: list, prefer_keywords=("srtclaw", "睿云", "index.html", "localhost")) -> Optional[dict]:

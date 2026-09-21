@@ -42,12 +42,16 @@ ATTACH_BUTTON_SELECTOR = "button.chat-input-btn--attach"
 # 输入区容器（拖拽落点），实测结构 chat-input-shell > … > textarea.chat-input-textarea
 COMPOSER_SELECTOR = "div.chat-input-shell"
 
-# 界面就绪判定：应用启动会先显示一个 data: 授权外壳页，需等到主 UI（本地 http 服务）挂载完成
+# 界面就绪判定：应用启动会先显示一个 data: 授权外壳页，需等到主 UI（本地 http 服务）挂载完成。
+# 实测（Windows 2.0.14）：主界面跑在 http://127.0.0.1:5173/，端口后于 CDP 端口就绪，
+# 且标题会先短暂显示 "127.0.0.1:5173" 再变成「睿云智能工作台」，所以只认 http+正文长度。
 READY_JS = r"""
 (() => {
   const href = location.href || '';
+  const h = href.toLowerCase();
   const bodyLen = document.body ? document.body.innerText.length : 0;
-  const isHttp = href.startsWith('http://127.0.0.1') || href.startsWith('http://localhost');
+  const isHttp = h.startsWith('http://127.0.0.1') || h.startsWith('http://localhost')
+              || h.startsWith('http://[::1]');
   return { href: href.slice(0, 120), bodyLen: bodyLen, ready: isHttp && bodyLen > 200 };
 })()
 """
@@ -103,6 +107,15 @@ class RuiyunUIDriver:
         self.reused_existing = False
         # 自动确认（CDP 点击确认卡片）：配置与事件留痕
         app_cfg = cfg.get("app", {}) or {}
+        # 应用已在运行但没有调试端口时，是否先关掉再以调试模式重启。
+        # 必须重启的原因见 launch()：Electron 单实例会把新进程的启动参数吞掉，
+        # 不重启就永远拿不到可驱动的实例（环境档案也只在启动时注入）。
+        # 若希望自己手动控制（例如应用里正跑着重要任务），置 false 走「关闭实例」按钮。
+        self.restart_if_no_port = bool(app_cfg.get("restart_if_no_debug_port", True))
+        # 「界面就绪」的等待预算：调试端口起来 ≠ 界面可用。实测 Windows dev 环境下
+        # 应用可能先弹登录窗（ruiyun-dev.3ren.cn），主界面要等登录流程走完才渲染，
+        # 60s 常常不够（表现为「端口上有页面，但正文为空、接不进去」）。
+        self.ui_ready_timeout = float(app_cfg.get("ui_ready_timeout_s", 180))
         self.auto_confirm = bool(app_cfg.get("auto_confirm", False))
         self.confirm_keywords = list(app_cfg.get("confirm_keywords") or [])
         # 同一文本的卡片点击冷却秒数（给应用处理时间，也防刷点）
@@ -197,30 +210,169 @@ class RuiyunUIDriver:
         self.env_profile_desc = profile_desc
         if self.cfg.get("app", {}).get("log_env_profile", True):
             print(f"[ui_driver] 环境档案: {profile_desc}", flush=True)
+
+        # 端口不通但应用进程还在 → 那是「没有调试端口」的实例（用户从开始菜单/自启动
+        # 拉起的）。Electron 是单实例应用：此时直接 Popen 新进程，argv 会被转交给旧
+        # 实例、新进程立刻退出，调试端口永远不会打开。实测（Windows）：
+        #   应用已在运行 → launch() 起的新进程 code=0 秒退、进程数不增、端口始终不监听，
+        #   22.5s 后只换来一句「应用启动失败或调试端口未就绪」。
+        # 所以必须先关掉这些实例再以调试模式启动 —— 与 launch_app_dev.sh/.ps1 的
+        # 「杀到干净再启动」同一策略；环境档案也只在启动时注入，本来就需要重启才生效。
+        stale = self._running_app_pids()
+        if stale:
+            if not self.restart_if_no_port:
+                print(f"[ui_driver] ✗ 应用已在运行但没有调试端口（pid {stale}），"
+                      "而 app.restart_if_no_debug_port=false：请先在界面点"
+                      "「✕ 关闭实例」再运行测试", flush=True)
+                return False
+            print(f"[ui_driver] 检测到 {len(stale)} 个应用进程但没有调试端口"
+                  f"（pid {stale}）—— 先关闭再以调试模式启动", flush=True)
+            self._kill_running_apps()
+
+        self.proc = self._spawn(args, env)
+        self._launched_by_us = True
+        if not wait:
+            return True
+        ok = wait_for_port(self.port, self.launch_timeout)
+        if not ok and self.proc.poll() is not None and self.restart_if_no_port:
+            # 竞态兜底：我们探测端口之后、启动之前，用户又拉起了一个无端口实例，
+            # 于是这一发同样被单实例吞掉。关掉它再重试一次（只重试一次）。
+            again = self._running_app_pids()
+            if again:
+                print(f"[ui_driver] 新进程被单实例吞掉（code={self.proc.returncode}），"
+                      f"关闭 {len(again)} 个已有实例后重试一次…", flush=True)
+                self._kill_running_apps()
+                self.proc = self._spawn(args, env)
+                ok = wait_for_port(self.port, self.launch_timeout)
+        if not ok:
+            self._report_launch_failure()
+        return ok
+
+    def _spawn(self, args: list, env: dict):
+        """拉起应用进程（Windows 用独立进程组 + DETACHED，其它平台新会话）。"""
         kwargs = {}
         if sys.platform == "win32":
             kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | 0x00000008  # DETACHED_PROCESS
         else:
             kwargs["start_new_session"] = True
-
-        self.proc = subprocess.Popen(
+        return subprocess.Popen(
             args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             env=env, **kwargs
         )
-        self._launched_by_us = True
-        if not wait:
-            return True
-        ok = wait_for_port(self.port, self.launch_timeout)
-        return ok
+
+    def _running_app_pids(self) -> list:
+        """在跑的应用进程 pid（按可执行文件名匹配，覆盖手动启动的实例）。
+
+        为什么按**字节**解析 tasklist 输出：它的输出编码随控制台代码页而变
+        （`chcp 65001` 下是 UTF-8，中文系统默认是 GBK）。若按 locale 解码再比对
+        中文进程名，UTF-8 输出会被解成 `鐫夸簯鏅鸿兘...` 之类的乱码，
+        进程名永远比不上、函数恒返回空 —— 「检测已有实例」这一步会静默失效
+        （实测：修复前正是这个原因导致它查不到已在运行的应用）。
+        进程名交给 tasklist 的 /FI 过滤器（内部按 Unicode 匹配），
+        pid 是纯数字与编码无关，因此这里只认「以引号开头的 CSV 行」即可。
+        """
+        name = Path(self.binary).name
+        if not name:
+            return []
+        if sys.platform != "win32":
+            try:
+                out = subprocess.run(["pgrep", "-x", name],
+                                     capture_output=True, text=True, timeout=10).stdout
+                return [int(x) for x in out.split() if x.strip().isdigit()]
+            except Exception:
+                return []
+        try:
+            raw = subprocess.run(
+                ["tasklist", "/FI", f"IMAGENAME eq {name}", "/FO", "CSV", "/NH"],
+                capture_output=True, timeout=15).stdout
+        except Exception:
+            return []
+        pids = []
+        for line in raw.split(b"\n"):
+            s = line.strip()
+            if not s.startswith(b'"'):
+                continue          # 「没有运行的任务…」之类的提示行，不是进程行
+            cols = s.split(b",")
+            if len(cols) < 2:
+                continue
+            pid = cols[1].strip().strip(b'"')
+            if pid.isdigit():
+                pids.append(int(pid))
+        return pids
+
+    def _kill_running_apps(self) -> None:
+        """关闭所有在跑的应用进程，并等到进程与端口都真正释放。
+
+        **先优雅关闭再强杀**：`taskkill /F`（等价 SIGKILL）不给应用收尾机会，
+        实测会丢掉 dev 登录态 —— 下次启动弹出登录窗（ruiyun-dev.3ren.cn），
+        主界面要等登录流程走完才渲染，于是「调试端口起来了但 60s 内接不进界面」。
+        不带 /F 的 taskkill 会发 WM_CLOSE，应用能正常落盘会话并退出。
+        """
+        name = Path(self.binary).name
+        try:
+            if sys.platform == "win32":
+                subprocess.run(["taskkill", "/T", "/IM", name],
+                               capture_output=True, timeout=20)
+            else:
+                subprocess.run(["pkill", "-x", name], capture_output=True, timeout=20)
+        except Exception as exc:
+            print(f"[ui_driver] 关闭已有实例失败：{type(exc).__name__}: {exc}", flush=True)
+        for _ in range(20):                     # 最多等 10s 优雅退出
+            if not self._running_app_pids() and not self.is_up():
+                print("[ui_driver] 已有实例已关闭，调试端口可以重新绑定", flush=True)
+                return
+            time.sleep(0.5)
+        graceful = False
+
+        print("[ui_driver] ⚠ 优雅关闭超时，改用强制结束（可能丢掉应用的登录态）", flush=True)
+        try:
+            if sys.platform == "win32":
+                subprocess.run(["taskkill", "/F", "/T", "/IM", name],
+                               capture_output=True, timeout=20)
+            else:
+                subprocess.run(["pkill", "-9", "-x", name],
+                               capture_output=True, timeout=20)
+        except Exception as exc:
+            print(f"[ui_driver] 强制结束失败：{type(exc).__name__}: {exc}", flush=True)
+        for _ in range(20):
+            if not self._running_app_pids() and not self.is_up():
+                print("[ui_driver] 已有实例已强制结束", flush=True)
+                return
+            time.sleep(0.5)
+        print("[ui_driver] ⚠ 已有实例仍未完全退出，仍继续尝试启动", flush=True)
+        del graceful
+
+    def _report_launch_failure(self) -> None:
+        """调试端口没起来时，把可区分的根因写清楚（而不是一句笼统的失败）。"""
+        if not Path(self.binary).is_file():
+            hint = f"可执行文件不存在：{self.binary}"
+        else:
+            code = self.proc.poll() if self.proc else None
+            alive = self._running_app_pids()
+            if code is not None:
+                hint = (f"新进程已退出（code={code}）：Electron 单实例把启动参数转交给了"
+                        "已在运行的实例，调试端口因此不会打开")
+            elif alive:
+                hint = (f"新进程仍在运行、但端口 {self.port} 未就绪；当前有 {len(alive)} 个"
+                        "应用进程 —— 可能是安全软件拦截了 --remote-debugging-port，"
+                        "或该端口已被别的程序占用")
+            else:
+                hint = "应用进程不存在：启动参数或可执行文件路径有问题"
+        print(f"[ui_driver] ✗ 调试端口 {self.port} 在 {self.launch_timeout:.0f}s 内未就绪 —— {hint}",
+              flush=True)
 
     def attach(self, timeout_s: Optional[float] = None) -> bool:
         """连接主界面渲染进程，直到主 UI 真正挂载完成。
 
         应用启动过程中会出现多个 page 目标（data: 授权外壳页、about:blank、
-        主窗口），且主窗口晚于调试端口就绪。这里用 READY_JS 做就绪判定，
+        登录窗、主窗口），且主窗口晚于调试端口就绪。这里用 READY_JS 做就绪判定，
         只有本地 http 服务且正文已渲染的目标才算可用。
+
+        默认等待预算是 ui_ready_timeout_s（180s），比 launch_timeout（端口就绪，
+        60s）宽松：dev 环境启动会先走登录窗，主界面渲染明显晚于端口。
         """
-        deadline = time.time() + (timeout_s or self.launch_timeout)
+        deadline = time.time() + (timeout_s or self.ui_ready_timeout)
+        wait_s = timeout_s or self.ui_ready_timeout
         while time.time() < deadline:
             for tgt in list_targets(self.port):
                 if tgt.get("type") != "page":
@@ -240,6 +392,16 @@ class RuiyunUIDriver:
                 except Exception:
                     continue
             time.sleep(1)
+        # 失败时把端口上的真实目标打出来：端口活着却没有可用主界面，可能是
+        # ① 应用还停在外壳页/登录页 ② 端口被别的程序占用（端口号撞车）。
+        # 这两种情况的处理方式完全不同，日志必须能区分。
+        tgts = list_targets(self.port)
+        print(f"[ui_driver] ✗ {wait_s:.0f}s 内没有可用的主界面页面"
+              f"（端口 {self.port} 上共 {len(tgts)} 个目标）", flush=True)
+        for t in tgts[:8]:
+            print("    type={:8s} url={}  title={}".format(
+                str(t.get("type")), (t.get("url") or "")[:90],
+                (t.get("title") or "")[:40]), flush=True)
         return False
 
     def ensure_ready(self) -> tuple:
@@ -319,6 +481,34 @@ class RuiyunUIDriver:
             time.sleep(1)
         return None
 
+    def dump_dom_snapshot(self, name: str = "ui_dom_error.json") -> dict:
+        """把当前页面状态与可交互元素导出到 artifacts/（选择器失效时的现场）。
+
+        与 discover_ui.py 同源（都用 DISCOVER_JS），区别是**自动触发**：
+        输入框定位不到、文本写不进去时，必须留下「页面当时到底长什么样」，
+        否则跨平台改选择器只能靠猜。返回 {path, summary} 供日志与异常信息引用。
+        """
+        out = {"page": self.page_state()}
+        try:
+            out["dom"] = self.discover()
+        except Exception as exc:
+            out["dom_error"] = f"{type(exc).__name__}: {exc}"
+        try:
+            root = Path(__file__).resolve().parent.parent / "artifacts"
+            root.mkdir(parents=True, exist_ok=True)
+            p = root / name
+            p.write_text(json.dumps(out, ensure_ascii=False, indent=2),
+                         encoding="utf-8")
+            path = str(p)
+        except OSError as exc:
+            path = f"(导出失败: {exc})"
+        st = out.get("page") or {}
+        summary = (f"页面 {st.get('href') or '?'}"
+                   f" | 登录页={st.get('login_like')}"
+                   f" | 输入区={st.get('has_composer')}"
+                   f" | 正文 {(st.get('body_head') or '')[:60]}")
+        return {"path": path, "summary": summary}
+
     # ------------------------------------------------------------ 输入
     def _focus_input(self, sel: str) -> bool:
         expr = (
@@ -331,6 +521,45 @@ class RuiyunUIDriver:
             return bool(self.cdp.eval_js(expr, timeout=15))
         except CDPError:
             return False
+
+    def _element_center(self, sel: str) -> Optional[dict]:
+        """元素中心坐标（不可见返回 None）。"""
+        expr = (
+            f"(() => {{ const e=document.querySelector({json.dumps(sel)});"
+            f" if(!e) return null; const r=e.getBoundingClientRect();"
+            f" if(r.width<=0||r.height<=0) return null;"
+            f" return {{x: Math.round(r.x+r.width/2),"
+            f"          y: Math.round(r.y+r.height/2)}}; }})()"
+        )
+        try:
+            pt = self.cdp.eval_js(expr, timeout=10)
+        except CDPError:
+            return None
+        return pt if isinstance(pt, dict) else None
+
+    def click_at_point(self, pt: dict) -> None:
+        """按坐标发真实鼠标左键点击（mousePressed + mouseReleased）。
+
+        与 JS 的 `el.click()` / `el.focus()` 的关键差别：真实鼠标事件产生
+        **user activation**，并走完整的命中测试与焦点链路 —— 受控输入组件据此
+        才会进入「可输入 / 可发送」状态（新版构建上尤其如此）。
+        """
+        for etype, buttons in (("mousePressed", 1), ("mouseReleased", 0)):
+            self.cdp.call("Input.dispatchMouseEvent", {
+                "type": etype, "x": int(pt["x"]), "y": int(pt["y"]),
+                "button": "left", "buttons": buttons, "clickCount": 1,
+            }, timeout=10)
+
+    def _click_selector(self, sel: str) -> bool:
+        """真实点击某选择器命中的元素。"""
+        pt = self._element_center(sel)
+        if not pt:
+            return False
+        try:
+            self.click_at_point(pt)
+        except CDPError:
+            return False
+        return True
 
     def _input_text_now(self, sel: str) -> str:
         expr = (
@@ -375,7 +604,9 @@ class RuiyunUIDriver:
         """
         sel = self._resolve_input()
         if not sel:
-            raise RuntimeError("未能定位输入框，请先运行 discover() 检查 DOM")
+            info = self.dump_dom_snapshot()
+            raise RuntimeError(
+                f"未能定位输入框（现场已导出 {info['path']}）：{info['summary']}")
         # 缓存的选择器必须仍指向真实可见的输入框：视图切换后 React 重挂载，
         # 旧选择器可能指向已被卸载的元素，焦点"成功"但发送会落到虚空。
         if not self._focus_input(sel):
@@ -390,7 +621,20 @@ class RuiyunUIDriver:
         if text[:12] in self._input_text_now(sel):
             return
 
-        # 回退：原生 setter + 手动派发 input 事件（绕过 React 的 value 劫持）
+        # 回退 1：先发一次**真实鼠标点击**再走编辑管线。
+        # `Input.insertText` 在部分 Windows 构建上会静默无效（受控组件没进入编辑态），
+        # 而真实点击带来 user activation，输入才会真正过应用自己的编辑管线。
+        # 这一层顺序很关键：直接改 DOM value（回退 2）虽然能把字塞进去，
+        # 却绕过了应用内部状态 —— 发送按钮可能仍处于禁用态，
+        # 表现为「输入框里明明有字，就是发不出去」。
+        if self._click_selector(sel):
+            self._focus_input(sel)
+            self.cdp.insert_text(text)
+            time.sleep(0.4)
+            if text[:12] in self._input_text_now(sel):
+                return
+
+        # 回退 2（最后手段）：原生 setter + 手动派发 InputEvent，绕过 React 的 value 劫持
         payload = json.dumps(text)
         expr = f"""
         (() => {{
@@ -405,8 +649,17 @@ class RuiyunUIDriver:
           }} else {{
             el.innerText = {payload};
           }}
-          el.dispatchEvent(new Event('input', {{ bubbles: true }}));
-          el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+          // 用 InputEvent 而不是裸 Event：带 inputType / data 的事件才会被富文本编辑器
+          // 和「按输入类型判定能否发送」的受控组件识别（裸 Event 常被直接忽略）。
+          let ev;
+          try {{
+            ev = new InputEvent('input', {{bubbles: true, inputType: 'insertText',
+                                           data: {payload}}});
+          }} catch (err) {{
+            ev = new Event('input', {{bubbles: true}});
+          }}
+          el.dispatchEvent(ev);
+          el.dispatchEvent(new Event('change', {{bubbles: true}}));
           return true;
         }})()
         """
@@ -415,8 +668,13 @@ class RuiyunUIDriver:
 
         landed = self._input_text_now(sel)
         if text[:12] not in landed:
+            info = self.dump_dom_snapshot("ui_dom_input_failed.json")
             raise RuntimeError(
-                f"文本未写入输入框（当前内容 {landed[:40]!r}），已中止发送")
+                f"文本未写入输入框（当前内容 {landed[:40]!r}），已中止发送；"
+                f"现场已导出 {info['path']}：{info['summary']}")
+        print("[ui_driver] ⚠ 文本经「DOM 直写」兜底写入：应用自身的编辑管线没有生效，"
+              "若发送按钮仍为禁用态，本次发送会失败（详见随后的 composer 状态）",
+              flush=True)
         self._input_selector = None   # 视图切换后重新定位更稳妥
 
     # ------------------------------------------------------------ 附件投递
@@ -645,37 +903,146 @@ class RuiyunUIDriver:
         except CDPError:
             return False
 
-    def _click_send_button(self) -> bool:
-        kw = json.dumps(SEND_KEYWORDS)
-        expr = f"""
-        (() => {{
-          const kws = {kw};
-          const cands = [...document.querySelectorAll('button,[role="button"],div,span,svg')];
-          for (const el of cands) {{
-            const blob = ((el.innerText||'') + ' ' + (el.getAttribute('aria-label')||'')
-                          + ' ' + (el.className||'').toString() + ' ' + (el.getAttribute('title')||'')).toLowerCase();
-            if (!kws.some(k => blob.includes(k))) continue;
-            const r = el.getBoundingClientRect();
-            if (r.width <= 0 || r.height <= 0) continue;
-            if (r.width > 260 || r.height > 120) continue;   // 排除容器
-            const btn = el.closest('button,[role="button"]') || el;
-            btn.click();
-            return (btn.innerText||btn.className||'clicked').toString().slice(0,40);
-          }}
-          return null;
-        }})()
-        """
+    # 发送按钮探测/点击：同一段脚本，用 click 开关区分「真点」与「只看」。
+    # 关键改动：**跳过 disabled / aria-disabled 候选**（点了也不会发，旧实现却把它
+    # 记成一次成功点击），并在一个都点不了时如实返回 disabled:<按钮描述>。
+    _SEND_BUTTON_JS = r"""
+    (() => {
+      const kws = %s;
+      const click = %s;
+      const cands = [...document.querySelectorAll('button,[role="button"],div,span,svg')];
+      let disabledSeen = null;
+      for (const el of cands) {
+        const blob = ((el.innerText||'') + ' ' + (el.getAttribute('aria-label')||'')
+                      + ' ' + (el.className||'').toString() + ' ' + (el.getAttribute('title')||'')).toLowerCase();
+        if (!kws.some(k => blob.includes(k))) continue;
+        const r = el.getBoundingClientRect();
+        if (r.width <= 0 || r.height <= 0) continue;
+        if (r.width > 260 || r.height > 120) continue;   // 排除容器
+        const btn = el.closest('button,[role="button"]') || el;
+        const label = ((btn.innerText||'') + '/' + (btn.getAttribute('aria-label')||'')
+                       + '/' + (btn.getAttribute('title')||'') + '/'
+                       + ((btn.className||'').toString())).replace(/\s+/g, ' ').trim().slice(0, 40)
+                      || 'clicked';
+        const dis = !!btn.disabled || btn.getAttribute('aria-disabled') === 'true';
+        if (dis) { if (!disabledSeen) disabledSeen = 'disabled:' + label; continue; }
+        if (click) btn.click();
+        return label;
+      }
+      return disabledSeen;
+    })()
+    """
+
+    def _send_button(self, click: bool) -> str:
+        """探测（或点击）发送按钮，返回按钮描述；返回 disabled:xxx 表示存在但不可点。"""
+        expr = self._SEND_BUTTON_JS % (json.dumps(SEND_KEYWORDS),
+                                      "true" if click else "false")
         try:
-            return bool(self.cdp.eval_js(expr, timeout=15))
+            return str(self.cdp.eval_js(expr, timeout=15) or "")
         except CDPError:
-            return False
+            return ""
+
+    def _click_send_button(self) -> str:
+        """点击发送按钮，返回按钮描述（空串 = 没找到；disabled:* = 找到但不可点）。"""
+        return self._send_button(click=True)
+
+    def _input_text_now_any(self) -> str:
+        """读当前输入框内容；选择器缓存失效时重新定位一次。"""
+        sel = self._input_selector or self._resolve_input(wait_s=3)
+        return self._input_text_now(sel) if sel else ""
+
+    def _wait_input_cleared(self, timeout_s: float = 1.5) -> bool:
+        """等待输入框被清空 —— 「消息真的发出去了」最直接的信号。"""
+        deadline = time.time() + max(0.3, timeout_s)
+        while time.time() < deadline:
+            if not self._input_text_now_any().strip():
+                return True
+            time.sleep(0.2)
+        return False
 
     def send(self) -> str:
-        """先尝试按钮，无按钮则回车。返回实际使用的发送方式。"""
-        if self._click_send_button():
-            return "button"
+        """发送：按钮 → 回车 → 带 char 的回车，逐级校验「输入框是否真的被清空」。
+
+        旧实现只要发出过一次 click 就返回 button，于是「点到容器 / 点到禁用按钮 /
+        应用没进入可发送态」统统被当成已发送，一路等到「未产生新会话」才失败，
+        控制台里看不到真实原因。现在以输入框是否真的清空作为判据，逐级降级：
+
+          1) 点发送按钮（跳过 disabled 候选）；
+          2) 回车 —— 先按旧口径只发 rawKeyDown + keyUp；
+          3) 仍没生效才补发 char 事件。靠 keypress / beforeinput 提交的应用
+             只有这一发能收到（Chromium 在 text 为空时不合成字符事件）。
+
+        分级而不是「一上来就带 char」的原因：对「keydown 即发送」的应用，
+        多余的一次字符事件会在已清空的输入框里插入一个换行。
+        """
+        landed = self._input_text_now_any()
+        desc = self._click_send_button()
+        clicked = bool(desc) and not desc.startswith("disabled:")
+        if clicked and (not landed.strip() or self._wait_input_cleared(1.5)):
+            return f"button({desc})"
+
         self.cdp.press_key("Enter")
-        return "enter"
+        if not landed.strip() or self._wait_input_cleared(1.2):
+            return "enter"
+
+        self.cdp.press_key("Enter", text="\r")
+        if landed.strip():
+            self._wait_input_cleared(1.2)
+        return "enter(char)" if clicked or not desc else f"enter(按钮不可点:{desc})"
+
+    def composer_state(self) -> dict:
+        """输入区与发送按钮的现状快照。
+
+        发送后没产生会话时，流水线会把它写进控制台 —— 「字根本没进去」
+        与「有字但发不出去（按钮不可点）」是两类完全不同的故障，必须能区分，
+        否则只能看到一句笼统的「未产生新会话」。
+        """
+        sel = self._input_selector or self._resolve_input(wait_s=3)
+        text = self._input_text_now(sel) if sel else ""
+        return {
+            "input_selector": sel or "",
+            "text_len": len(text or ""),
+            "text_head": (text or "")[:40],
+            "send_button": self._send_button(click=False),
+        }
+
+    def page_state(self) -> dict:
+        """页面现状快照：URL/标题、是否登录页、有没有输入区与新任务按钮。
+
+        全新 Windows 安装很可能停在登录页 —— 那时页面里根本没有对话输入框，
+        表现为「无法回到新建任务首页 / 未能定位输入框」。把登录页判断出来并
+        显示正文片段，比让人对着「找不到输入框」猜要有效得多。
+        """
+        expr = r"""
+        (() => {
+          const vis = (el) => {
+            if (!el) return false;
+            const r = el.getBoundingClientRect();
+            return r.width > 0 && r.height > 0;
+          };
+          const body = (document.body ? document.body.innerText : '') || '';
+          const loginRe = /(登录|扫码|验证码|账号|密码|sign\s*in|log\s*in)/i;
+          const pwd = [...document.querySelectorAll('input[type="password"]')].some(vis);
+          const composer = [...document.querySelectorAll(
+            'textarea,[contenteditable="true"],[role="textbox"]')].some(vis);
+          const newTask = [...document.querySelectorAll('button')].some(b =>
+            ((b.innerText || '').includes('新建任务')
+             || ((b.className || '').toString().includes('sidebar-primary-action'))));
+          return {
+            href: (location.href || '').slice(0, 160),
+            title: (document.title || '').slice(0, 80),
+            has_password_input: pwd,
+            has_composer: composer,
+            has_new_task: newTask,
+            login_like: pwd || loginRe.test(body),
+            body_head: body.replace(/\s+/g, ' ').slice(0, 120),
+          };
+        })()
+        """
+        try:
+            return self.cdp.eval_js(expr, timeout=15) or {}
+        except CDPError:
+            return {}
 
     # ------------------------------------------------------------ 自动确认
     # 卡片内容完全由 LLM 生成，选项文本不可枚举，因此两层检测：
