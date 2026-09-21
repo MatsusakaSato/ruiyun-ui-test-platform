@@ -178,16 +178,21 @@ def extract_artifacts(tool_calls) -> ArtifactSet:
 def resolve_abs_path(artifact: "Artifact", workspace_root: str = "") -> str:
     """把产物解析成本机绝对路径；解析不到返回空串。
 
-    用途：界面「查看产物」按钮要调 `POST /api/reveal`（后端 `open -R`），
-    而它只认绝对路径，事实包里记的却是 `rel_path`。
+    用途：界面「查看产物」按钮要调 `POST /api/reveal`（后端在文件管理器中定位），
+    而它只认绝对路径，事实包里记的却常是 `rel_path`。
 
     解析顺序（逐级回落，**只读且有界**）：
       1) `full_path`（工具结果里带 `full_path/workspace_path` 时最可靠）
+         —— 注意：**应用自己报的 workspace_path 才是最权威的根**。实测本机应用
+         写的是 `C:\\Users\\<用户>\\Documents\\srtclaw\\workspace`，与我们在
+         config 里假定的 `~/.srtclaw/workspace` **不是同一个目录**；若直接拿
+         配置里的根去拼相对路径，产物会被错误地解析到另一个（可能不存在的）位置。
       2) `rel_path` 本身已是绝对路径
-      3) `workspace_root / rel_path`
-      4) `workspace_root / 去掉盘符式前缀后的 rel_path`
+      3) `full_path/workspace_path 根 / rel_path`（应用自报根，优先于配置根）
+      4) `workspace_root / rel_path`（配置根）
+      5) `workspace_root / 去掉盘符式前缀后的 rel_path`
          （实测产物路径偶有 `C:/Users/...` 这类跨平台写法，在本机需剥掉前缀）
-      5) 在 `workspace_root` 下按**文件名**有界查找（限深度与访问量，避免全量扫描）
+      6) 在 `workspace_root` 下按**文件名**有界查找（限深度与访问量，避免全量扫描）
 
     解析不到时**不隐藏条目**：调用方保留原 rel_path 并在界面标注「本机未找到」，
     与平台「不假成功、如实呈现」的口径一致。
@@ -200,22 +205,55 @@ def resolve_abs_path(artifact: "Artifact", workspace_root: str = "") -> str:
         return str(q) if q.is_absolute() and q.is_file() else ""
 
     rel = (artifact.rel_path or "").strip().replace("\\", "/")
+    full = (artifact.full_path or "").strip()
+    roots: list = []
+    if full:
+        try:
+            fp = Path(full).expanduser()
+        except (OSError, ValueError, RuntimeError):
+            fp = None
+        if fp is not None:
+            # workspace_path 可能是**目录**（应用自报工作区根），也可能已是文件全路径
+            if fp.suffix == "" or fp.is_dir():
+                roots.append(str(fp))
+            else:
+                roots.append(str(fp.parent))
     cands = []
-    if (artifact.full_path or "").strip():
-        cands.append(artifact.full_path.strip())
+    if full:
+        cands.append(full)
     if rel:
         cands.append(rel)
-        root = (workspace_root or "").strip().rstrip("/")
-        if root:
-            cands.append(f"{root}/{rel.lstrip('/')}")
-            cands.append(f"{root}/{re.sub(r'^[A-Za-z]:/', '', rel).lstrip('/')}")
+        for r in roots + ([(workspace_root or "").strip().rstrip("/")]
+                          if (workspace_root or "").strip() else []):
+            r = r.rstrip("/\\")
+            if r:
+                cands.append(f"{r}/{rel.lstrip('/')}")
+                cands.append(f"{r}/{re.sub(r'^[A-Za-z]:/', '', rel).lstrip('/')}")
     for c in cands:
         hit = _ok(c)
         if hit:
             return hit
 
     name = rel.rsplit("/", 1)[-1] if rel else ""
-    root = (workspace_root or "").strip()
+    # 兜底查找的根：应用自报根优先（它就是产物真正落地的地方），再退回配置根
+    search_roots = [r for r in (roots + [(workspace_root or "").strip()]) if r]
+    for root in search_roots:
+        hit = _search_by_name(root, name, rel)
+        if hit:
+            return hit
+    return ""
+
+
+def _is_file(path) -> bool:
+    """路径是否指向一个真实存在的文件（失败一律按「否」处理）。"""
+    try:
+        return Path(path).expanduser().is_file()
+    except (OSError, ValueError, RuntimeError):
+        return False
+
+
+def _search_by_name(root: str, name: str, rel: str) -> str:
+    """在 root 下按文件名有界查找；找不到返回空串。"""
     if not name or not root or not Path(root).expanduser().is_dir():
         return ""
     # 按文件名查找时要求「后缀命中」而不是只比文件名：同名文件在工作区里很常见
@@ -242,7 +280,7 @@ def resolve_abs_path(artifact: "Artifact", workspace_root: str = "") -> str:
                 if a != b:
                     break
                 score += 1
-            if score > best_score and _ok(cand):
+            if score > best_score and _is_file(cand):
                 best, best_score = str(cand), score
                 if best_score >= len(rel_parts):    # 整段命中，无需继续找
                     break

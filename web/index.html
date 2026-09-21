@@ -1585,14 +1585,16 @@ async function loadRounds(){
 
 /* 产物目录：只有本轮**确实有产物**时才出现（不拿「没有产物」占位，避免噪音）。
    路径全部由服务端下发（artifacts.root），前端不自己拼 —— 产物在工作区里的
-   落点由 agent 决定，前端拼不出来。悬停列出全部产物文件，点击打开所在目录。 */
+   落点由 agent 决定，前端拼不出来。悬停列出全部产物文件，点击打开所在目录。
+   清单来源：detail=流水线跑完就落盘（未评估也有）；evaluation=仅评估产物（旧轮次）。 */
 function artLink(r){
   const a=r.artifacts||{};
   if(!a.count || !a.root) return '';
   const dirTip=a.multi_dir
     ? '本轮产物分散在多个目录，这里打开它们的最近公共目录'
     : '本轮产物所在目录';
-  const tip=`${dirTip}：${a.root}`;
+  const srcTip=a.source==='evaluation'?'（该轮次无流水线产物清单，此处为评估阶段抽取的结果）':'';
+  const tip=`${dirTip}：${a.root}${srcTip}`;
   const names=(a.paths||[]).map(p=>String(p).replace(/\\/g,'/').split('/').pop());
   const list=names.slice(0,12).join('\n')+(names.length>12?`\n…共 ${names.length} 件`:'');
   return `<span class="rart${a.exists?'':' busy'}" data-path="${esc(a.root)}"

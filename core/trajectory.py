@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from core.artifacts import extract_artifacts, resolve_abs_path
 from core.models import CaseResult, ExecutionTrace, ToolCall
 
 # 思考内容与工具结果一律输出全文，不做长度截断
@@ -314,7 +315,8 @@ def _merge_confirm_events(steps: list, trace, events: list) -> list:
     return out
 
 
-def build_case_detail(case: CaseResult, findings_by_step: dict | None = None) -> dict:
+def build_case_detail(case: CaseResult, findings_by_step: dict | None = None,
+                      cfg: dict | None = None) -> dict:
     trace = case.trace
     if trace is None:
         return {
@@ -332,6 +334,9 @@ def build_case_detail(case: CaseResult, findings_by_step: dict | None = None) ->
             "steps": _merge_confirm_events(
                 [], None, list(getattr(case, "confirm_events", []) or [])),
             "tools": [], "skills": [], "objective": {},
+            # 日志都没解析出来，产物自然抽不到；给空结构而不是省略字段，
+            # 免得消费方（界面 / 服务端聚合）要额外判 None
+            "artifacts": [], "artifact_kinds": [],
         }
     objective = build_objective(case)
 
@@ -417,6 +422,11 @@ def build_case_detail(case: CaseResult, findings_by_step: dict | None = None) ->
                                   list(getattr(case, "confirm_events", []) or []))
 
     answer = trace.final_answer or ""
+    # 产物在**流水线阶段**就从会话日志抽出来（不再只在质量评估里做）：
+    # 「本轮生成了什么文件」是执行结果的一部分，跟有没有配模型、有没有跑评估无关。
+    # 抽取是纯日志解析、无网络、无副作用，成本可忽略。
+    ws_root = str((cfg or {}).get("paths", {}).get("workspace_root") or "")
+    artifacts = extract_artifacts(trace.tool_calls)
     return {
         "case_id": case.case_id,
         "name": case.name,
@@ -445,6 +455,13 @@ def build_case_detail(case: CaseResult, findings_by_step: dict | None = None) ->
         "tools": sorted(tool_stats.values(), key=lambda x: -x["calls"]),
         "skills": list(skills.values()),
         "objective": objective,
+        # 本用例产物：rel_path 供审计，abs_path 供界面「查看产物」在文件管理器定位
+        # （解析不到时为空串，界面据此显示「未找到」而不是猜一个路径）
+        "artifacts": [{
+            "kind": a.kind, "path": a.rel_path, "note": a.note,
+            "abs_path": resolve_abs_path(a, ws_root),
+        } for a in artifacts.items],
+        "artifact_kinds": sorted(artifacts.kinds),
         "findings": [f.to_dict() if hasattr(f, "to_dict") else {
             "rule": f.rule, "severity": f.severity, "detail": f.detail,
             "tool": f.tool, "evidence": f.evidence, "step_index": f.step_index,
@@ -454,10 +471,13 @@ def build_case_detail(case: CaseResult, findings_by_step: dict | None = None) ->
 
 def build_round_detail(case_results: list, metrics: dict | None = None,
                        repro_rows: list | None = None,
-                       stage_times: dict | None = None) -> dict:
+                       stage_times: dict | None = None,
+                       cfg: dict | None = None) -> dict:
     """整轮详情：本轮全部用例的轨迹 + 客观信息 + 汇总指标。
 
     评估口径：只包含本轮用例会话，不追溯历史日志。
+    `cfg` 用于取 paths.workspace_root 解析产物绝对路径；缺省时产物只有相对路径
+    （界面会显示「未找到」而不是猜路径）。
     """
     # findings 按 (session, step) 索引，用于标注轨迹状态
     by_step: dict = {}
@@ -466,7 +486,7 @@ def build_round_detail(case_results: list, metrics: dict | None = None,
             if f.step_index is not None:
                 by_step.setdefault((c.session_id, f.step_index), []).append(f)
 
-    details = [build_case_detail(c, by_step) for c in case_results]
+    details = [build_case_detail(c, by_step, cfg) for c in case_results]
 
     # 轮次级客观汇总
     def _sum(field, key):
@@ -519,8 +539,25 @@ def build_round_detail(case_results: list, metrics: dict | None = None,
                 if f and f not in agg["files"]:
                     agg["files"].append(f)
 
+    # 轮次级产物汇总：把逐用例产物摊平成一份清单。
+    # 这里只做「本轮一共产出了什么」的事实汇总，**不在这里挑目录** ——
+    # 「打开哪个目录」是展示决策，由服务端 core.artifacts 之外的 server._round_artifacts
+    # 统一决定（列表页与详情页必须用同一套口径，否则两处会给出不同目录）。
+    round_artifacts: list = []
+    seen_art: set = set()
+    for d in details:
+        for a in (d.get("artifacts") or []):
+            key = (str(a.get("kind") or ""), str(a.get("path") or a.get("abs_path") or ""))
+            if key in seen_art:
+                continue
+            seen_art.add(key)
+            round_artifacts.append(a)
+
     return {
         "cases": details,
+        "round_artifacts": round_artifacts,
+        "round_artifact_kinds": sorted({str(a.get("kind") or "") for a in round_artifacts
+                                        if str(a.get("kind") or "")}),
         "round_tools": sorted(round_tools.values(), key=lambda x: -x["calls"]),
         "round_skills": sorted(round_skills.values(), key=lambda x: -x["sessions"]),
         "round_objective": round_objective,

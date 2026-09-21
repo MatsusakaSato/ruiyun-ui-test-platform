@@ -508,7 +508,7 @@ def main() -> int:
         detail = build_round_detail(
             results, metrics,
             [r.to_dict() for r in recipes] if recipes else [],
-            stage_times=stage_times)
+            stage_times=stage_times, cfg=cfg)
         (round_dir / "round_detail.json").write_text(
             json.dumps(detail, ensure_ascii=False), encoding="utf-8")
         round_summary = {
@@ -523,6 +523,11 @@ def main() -> int:
             "cases": metrics["case_rows"],
             "round_tools": detail["round_tools"],
             "round_skills": detail["round_skills"],
+            # 本轮产物清单：跑完即落盘，**不需要先做质量评估**。
+            # 「这轮产出了哪些文件」是执行结果的一部分，跟有没有配模型无关，
+            # 因此放在这里而不是评估产物里（评估仍会算它自己的那份，用于判分）。
+            "round_artifacts": detail.get("round_artifacts") or [],
+            "round_artifact_kinds": detail.get("round_artifact_kinds") or [],
             # 全流程标记：本轮所有自动确认事件（时间/按钮文本/class）
             "auto_confirm_events": getattr(driver, "confirm_events", []) if driver else [],
             # 自动确认连续失败时置 true —— 提示查看控制台并人工介入

@@ -934,15 +934,20 @@ def delete_round(run_id: str) -> tuple[bool, str]:
     return True, rid
 
 
-def _load_evaluation(d: Path) -> dict | None:
-    """读轮次的 evaluation.json（没有/损坏时返回 None）。"""
-    f = d / "evaluation.json"
+def _load_json(d: Path, name: str) -> dict | None:
+    """读轮次目录下的某个 JSON（缺失/损坏返回 None）。"""
+    f = d / name
     if not f.is_file():
         return None
     try:
         return json.loads(f.read_text(encoding="utf-8"))
     except Exception:
         return None
+
+
+def _load_evaluation(d: Path) -> dict | None:
+    """读轮次的 evaluation.json（没有/损坏时返回 None）。"""
+    return _load_json(d, "evaluation.json")
 
 
 def list_rounds() -> list:
@@ -967,8 +972,9 @@ def list_rounds() -> list:
             ]
             # 产物概览也要随列表下发：轮次列表左侧的「📁 产物目录」链接就是用它渲染的，
             # 只在详情接口给的话，列表里永远看不到这个入口（只有点进去才发现）。
-            # 只有**尚未评估**的轮次才没有产物信息 —— 那是口径本身决定的，
-            # 不是这里漏了：产物由评估阶段从会话日志抽取（见 core/artifacts.py）。
+            # 产物来自 round_detail.json（流水线落盘，跑完即有）；旧轮次没有该字段时
+            # 回落到 evaluation.json —— 两种来源由 _artifact_items 统一处理。
+            detail = _load_json(d, "round_detail.json")
             evaluation = _load_evaluation(d)
             out.append({
                 # run_id 一律取**目录名**：路由 /api/rounds/<rid> 是按目录名解析的，
@@ -982,7 +988,7 @@ def list_rounds() -> list:
                 "repro_summary": s.get("repro_summary") or {},
                 "round_skills": s.get("round_skills") or [],
                 "has_evaluation": evaluation is not None,
-                "artifacts": _round_artifacts(d, evaluation),
+                "artifacts": _round_artifacts(d, evaluation, detail),
                 "cases": cases,
             })
         except Exception:
@@ -990,7 +996,28 @@ def list_rounds() -> list:
     return out
 
 
-def _round_artifacts(d: Path, evaluation: dict | None) -> dict:
+def _artifact_items(detail: dict | None, evaluation: dict | None) -> tuple:
+    """本轮产物条目：优先取**流水线落的** round_detail.round_artifacts（跑完即有，
+    不需要质量评估），再回落到 evaluation.cases[].artifacts（历史轮次只有评估产物）。
+
+    返回 (items, source)，source ∈ {"detail", "evaluation", ""}，用于界面说明
+    「这份清单是哪来的」—— 旧轮次没有 round_artifacts 字段，只能靠评估那份。
+    """
+    items = []
+    for a in ((detail or {}).get("round_artifacts") or []):
+        if isinstance(a, dict) and (a.get("path") or a.get("abs_path")):
+            items.append(a)
+    if items:
+        return items, "detail"
+    for c in ((evaluation or {}).get("cases") or []):
+        for a in (c.get("artifacts") or []):
+            if isinstance(a, dict):
+                items.append(a)
+    return items, ("evaluation" if items else "")
+
+
+def _round_artifacts(d: Path, evaluation: dict | None,
+                     detail: dict | None = None) -> dict:
     """本轮产物的落点概览：给界面一个「打开产物目录」的入口。
 
     为什么要**一个目录**而不是一堆文件链接：产物是 agent 写进工作区的一棵目录树
@@ -999,18 +1026,13 @@ def _round_artifacts(d: Path, evaluation: dict | None) -> dict:
 
       1) 有产物绝对路径 → 取**这些产物的公共父目录**（最贴近产物本身，
          例如 <工作区>/空间名/任务名/）；
-      2) 否则退回评估时用的 `workspace_root`（本轮确实没有产物时的兜底；
-         历史 evaluation.json 没有本字段，同样落到这里）；
+      2) 否则退回评估时用的 `workspace_root`（历史评估产物里有这个字段）；
       3) 再不行退回轮次归档目录 —— 至少能打开本轮自己的东西。
 
     `count`/`kinds`/`multi_dir` 用于界面文案：「N 件（docx、pptx…）」，
     跨目录时明确写「最近公共目录」，不假装那就是唯一的产物目录。
     """
-    ev = evaluation or {}
-    items = []
-    for c in (ev.get("cases") or []):
-        for a in (c.get("artifacts") or []):
-            items.append(a)
+    items, source = _artifact_items(detail, evaluation)
 
     paths = [str(a.get("abs_path") or "").strip() for a in items]
     paths = [p for p in paths if p]
@@ -1029,7 +1051,7 @@ def _round_artifacts(d: Path, evaluation: dict | None) -> dict:
         except (ValueError, OSError):
             root = str(Path(paths[0]).parent)
     if not root:
-        root = str(ev.get("workspace_root") or "").strip()
+        root = str((evaluation or {}).get("workspace_root") or "").strip()
     if not root:
         root = str(d)
 
@@ -1042,6 +1064,8 @@ def _round_artifacts(d: Path, evaluation: dict | None) -> dict:
         "exists": Path(root).is_dir() if root else False,
         "multi_dir": multi_dir,
         "resolved": bool(paths),
+        # 清单来源：detail=流水线跑的（未评估也有）；evaluation=仅评估产物（旧轮次）
+        "source": source,
     }
 
 
@@ -1061,7 +1085,7 @@ def load_round(run_id: str) -> dict | None:
     evaluation = _load_evaluation(d)
     return {"run_id": run_id, "summary": summary, "detail": detail,
             "evaluation": evaluation,
-            "artifacts": _round_artifacts(d, evaluation)}
+            "artifacts": _round_artifacts(d, evaluation, detail)}
 
 
 # ---------------------------------------------------------------- HTTP
