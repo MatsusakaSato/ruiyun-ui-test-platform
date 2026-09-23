@@ -181,7 +181,7 @@ DEFAULT_WORKSPACE = str(Path.home() / ".ruiyun-autotest")
 
 # 历史遗留位置（按优先级排列）：应用迭代中数据曾存放的位置。
 # 目标不存在时按顺序找第一个存在的旧位置搬过来，实现无缝升级。
-_LEGACY_TESTCASES = [_ROOT / "testcases.yaml", _ROOT / "workspace" / "testcases.yaml"]
+_LEGACY_TESTCASES_DB = [_ROOT / "testcases.db", _ROOT / "workspace" / "testcases.db"]
 _LEGACY_UPLOADS = [_ROOT / "artifacts" / "uploads", _ROOT / "workspace" / "uploads"]
 _LEGACY_ROUNDS = [_ROOT / "artifacts" / "rounds", _ROOT / "workspace" / "rounds"]
 _LEGACY_CONFIG = [_ROOT / "config.yaml"]
@@ -221,13 +221,12 @@ def _migrate_first(sources: list, dst: Path) -> None:
 
 
 def preset_path() -> Path:
-    """预设用例文件：工作区/testcases.yaml（历史位置自动迁移）。"""
-    p = user_workspace() / "testcases.yaml"
-    _migrate_first(_LEGACY_TESTCASES, p)
-    # 用户把工作区改到别处时，默认工作区里的既有数据也要跟过去 ——
-    # 否则切目录等于「数据消失」，找不回的体验不可接受
+    """预设用例数据库文件：工作区/testcases.db。"""
+    p = user_workspace() / "testcases.db"
+    _migrate_first(_LEGACY_TESTCASES_DB, p)
+    # 用户把工作区改到别处时，默认工作区里的既有数据也要跟过去
     if str(user_workspace()) != DEFAULT_WORKSPACE:
-        _migrate_legacy(Path(DEFAULT_WORKSPACE) / "testcases.yaml", p)
+        _migrate_legacy(Path(DEFAULT_WORKSPACE) / "testcases.db", p)
     return p
 
 

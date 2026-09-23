@@ -46,8 +46,9 @@ header{background:var(--card);border-bottom:1px solid var(--line);position:stick
 .badge{display:inline-block;padding:1px 9px;border-radius:20px;font-size:11px;font-weight:600;line-height:18px}
 .b-run{background:#dbeafe;color:#1d4ed8}
 .b-idle{background:#f1f5f9;color:#64748b}
-.b-ok{background:#dcfce7;color:#15803d}
-.b-err{background:#fee2e2;color:#b91c1c}
+.b-ok,.b-pass{background:#dcfce7;color:#15803d}
+.b-err,.b-fail{background:#fee2e2;color:#b91c1c}
+.b-uifail{background:#ffedd5;color:#c2410c}
 select,input[type=number]{border:1px solid var(--line);border-radius:8px;padding:5px 8px;font-size:12.5px;color:var(--tx);background:#fff}
 .opt{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--tx2)}
 /* 参数说明：圆点问号 + 悬停气泡 */
@@ -68,9 +69,10 @@ select,input[type=number]{border:1px solid var(--line);border-radius:8px;padding
 .opt.dimmed{opacity:.45}
 .opt.dimmed select{cursor:not-allowed}
 button{cursor:pointer;border:none;border-radius:9px;font-size:13px;font-weight:600;font-family:inherit}
-.btn-run{background:var(--accent);color:#fff;padding:8px 18px}
+.btn-run{background:var(--accent);color:#fff;padding:8px 18px;transition:all .15s ease}
 .btn-run:hover{background:#1d4ed8}
 .btn-run:disabled{background:#94a3b8;cursor:not-allowed}
+.btn-run.is-running{background:#2563eb;cursor:wait;opacity:.92}
 .btn-ghost{background:#eef2f7;color:var(--tx2);padding:6px 12px;font-weight:500}
 
 /* ---------- 布局 ---------- */
@@ -92,16 +94,24 @@ h3.sec::before{content:"";width:3px;height:13px;background:var(--accent);border-
 .console-hd .ch-new{color:#fbbf24}
 .console-hd .spacer{flex:1}
 .console-btn{border:1px solid #334155;background:#1e293b;color:#cbd5e1;
-  border-radius:7px;padding:3px 10px;font-size:11px;font-weight:500;font-family:inherit}
+  border-radius:7px;padding:3px 9px;font-size:11px;font-weight:500;font-family:inherit}
 .console-btn:hover{background:#334155;color:#fff}
 .console{background:#0f172a;color:#cbd5e1;font-family:ui-monospace,Menlo,monospace;font-size:11.5px;
-  border-radius:0 0 10px 10px;padding:12px 14px;height:210px;overflow-y:auto;
+  border-radius:0;padding:12px 14px;height:210px;min-height:70px;max-height:85vh;overflow-y:auto;
   white-space:pre-wrap;word-break:break-all}
 /* 没有日志时用矮一点的占位，别让一块空白吃掉大半个首屏 */
 .console-wrap.compact .console{height:96px}
-.console-wrap.collapsed .console{display:none}
+.console-wrap.collapsed .console,
+.console-wrap.collapsed .console-resizer{display:none}
 .console .ln-time{color:#64748b}
 .console .ln-none{color:#475569}
+/* 控制台底部拖拽手柄 */
+.console-resizer{height:10px;background:#0f172a;border-radius:0 0 10px 10px;
+  border-top:1px solid #1e293b;display:flex;align-items:center;justify-content:center;
+  cursor:row-resize;user-select:none;transition:background .15s}
+.console-resizer:hover,.console-resizer.is-dragging{background:#1e293b}
+.resizer-bar{width:36px;height:3px;background:#334155;border-radius:2px;transition:all .15s}
+.console-resizer:hover .resizer-bar,.console-resizer.is-dragging .resizer-bar{background:#94a3b8;width:48px}
 /* 首页：当前用例（实时执行列表） */
 .home-sec{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;
   color:var(--tx2);margin:18px 0 10px}
@@ -111,12 +121,143 @@ h3.sec::before{content:"";width:3px;height:13px;background:var(--accent);border-
   background:none;border:none;font-family:inherit;padding:0}
 .home-link:hover{text-decoration:underline}
 .run-row{display:flex;align-items:center;gap:10px;padding:7px 2px;font-size:12.5px;
-  border-bottom:1px solid var(--line2)}
+  border-bottom:1px solid var(--line2);transition:background .2s, border .2s}
 .run-row:last-child{border-bottom:none}
 .run-row .rr-no{flex:0 0 34px;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:var(--tx3)}
 .run-row .rr-prompt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .run-row .rr-time{flex:0 0 auto;font-size:11px;color:var(--tx3)}
 .run-empty{color:var(--tx3);font-size:12.5px;padding:10px 2px}
+
+/* ---------- 运行动效 & 加载指示 ---------- */
+@keyframes spin { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
+@keyframes pulseDot { 0%, 100% { opacity:1; transform:scale(1); } 50% { opacity:.3; transform:scale(.75); } }
+@keyframes progressStripes { from { background-position:0 0; } to { background-position:28px 0; } }
+@keyframes subtleGlow { 0%, 100% { box-shadow:0 0 0 0 rgba(37,99,235,0); } 50% { box-shadow:0 0 0 3px rgba(37,99,235,.15); } }
+
+/* 运行按钮中的转圈 spinner */
+.btn-spinner {
+  display:inline-block;width:12px;height:12px;
+  border:2px solid rgba(255,255,255,.35);border-top-color:#fff;
+  border-radius:50%;animation:spin .75s linear infinite;
+  vertical-align:-1.5px;margin-right:6px;
+}
+
+/* 顶部状态徽章呼吸圆点 */
+.badge-dot-live {
+  display:inline-block;width:6px;height:6px;border-radius:50%;
+  background:#1d4ed8;margin-right:5px;vertical-align:1px;
+  animation:pulseDot 1.2s ease-in-out infinite;
+}
+
+/* 用例执行中徽章 */
+.b-executing {
+  background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;
+}
+.spinner-inline {
+  display:inline-block;width:9px;height:9px;
+  border:1.5px solid rgba(29,78,216,.25);border-top-color:#1d4ed8;
+  border-radius:50%;animation:spin .75s linear infinite;
+  vertical-align:-1px;margin-right:4px;
+}
+
+/* 用例排队中徽章内的脉冲圆点 */
+.dot-pulse {
+  display:inline-block;width:5px;height:5px;border-radius:50%;
+  background:#94a3b8;margin-right:4px;vertical-align:1px;
+  animation:pulseDot 1.4s ease-in-out infinite;
+}
+
+/* 当前正在执行的用例行高亮 */
+.run-row.is-executing {
+  background:#f8faff;border-left:3px solid var(--accent);
+  padding-left:8px;border-radius:4px;
+  animation:subtleGlow 2.5s ease-in-out infinite;
+}
+
+/* 运行进度条卡片 */
+.run-progress-box {
+  background:#f8fafc;border:1px solid var(--line);border-radius:8px;
+  padding:10px 14px;margin-bottom:12px;
+}
+.rpb-header {
+  display:flex;align-items:center;justify-content:space-between;
+  font-size:12px;color:var(--tx2);margin-bottom:7px;
+}
+.rpb-title {
+  display:flex;align-items:center;gap:7px;color:var(--tx);font-weight:600;
+}
+.spinner-blue {
+  display:inline-block;width:13px;height:13px;
+  border:2px solid rgba(37,99,235,.25);border-top-color:#2563eb;
+  border-radius:50%;animation:spin .75s linear infinite;
+}
+.rpb-pct {
+  font-family:ui-monospace,Menlo,monospace;font-weight:700;
+  color:var(--accent);font-size:13px;
+}
+.rpb-track {
+  height:7px;background:#e2e8f0;border-radius:99px;overflow:hidden;
+}
+.rpb-bar {
+  height:100%;background-color:var(--accent);
+  background-image:linear-gradient(45deg,rgba(255,255,255,.25) 25%,transparent 25%,transparent 50%,rgba(255,255,255,.25) 50%,rgba(255,255,255,.25) 75%,transparent 75%,transparent);
+  background-size:20px 20px;border-radius:99px;transition:width .3s ease;
+  animation:progressStripes 1s linear infinite;
+}
+
+/* 控制台实时输出标志 */
+.console-live {
+  display:inline-flex;align-items:center;gap:5px;font-size:11px;
+  color:#38bdf8;background:rgba(56,189,248,.12);border:1px solid rgba(56,189,248,.3);
+  padding:1px 7px;border-radius:12px;font-family:ui-monospace,Menlo,monospace;
+}
+.console-live .live-dot {
+  width:5px;height:5px;border-radius:50%;background:#38bdf8;
+  animation:pulseDot 1s ease-in-out infinite;
+}
+
+/* 首页用例全部测试完成 Banner */
+.run-done-banner {
+  display:flex;align-items:center;justify-content:space-between;
+  gap:14px;border-radius:10px;padding:11px 16px;margin-bottom:12px;
+  box-shadow:0 2px 6px rgba(15,23,42,.04);
+}
+.run-done-banner.banner-ok {
+  background:linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%);
+  border:1px solid #bbf7d0;
+}
+.run-done-banner.banner-warn {
+  background:linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+  border:1px solid #fde68a;
+}
+.rdb-left { display:flex;flex-direction:column;gap:3px; }
+.rdb-title {
+  display:flex;align-items:center;gap:8px;font-size:13.5px;font-weight:700;
+}
+.banner-ok .rdb-title { color:#15803d; }
+.banner-warn .rdb-title { color:#b45309; }
+.rdb-stats { font-size:12px;color:var(--tx2); }
+.banner-warn .rdb-stats { color:#92400e; }
+.rdb-stats .t-pass { color:#15803d;font-weight:600; }
+.rdb-stats .t-fail { color:#b91c1c;font-weight:600; }
+.rdb-btn {
+  display:inline-flex;align-items:center;justify-content:center;
+  color:#fff;padding:6px 18px;border-radius:8px;
+  font-size:12.5px;font-weight:600;text-decoration:none;cursor:pointer;
+  border:none;white-space:nowrap;transition:all .15s ease;
+}
+.banner-ok .rdb-btn {
+  background:#16a34a;box-shadow:0 1px 3px rgba(22,163,74,.25);
+}
+.banner-ok .rdb-btn:hover {
+  background:#15803d;box-shadow:0 3px 8px rgba(22,163,74,.35);transform:translateY(-1px);
+}
+.banner-warn .rdb-btn {
+  background:#d97706;box-shadow:0 1px 3px rgba(180,83,9,.25);
+}
+.banner-warn .rdb-btn:hover {
+  background:#b45309;box-shadow:0 3px 8px rgba(180,83,9,.35);transform:translateY(-1px);
+}
 
 /* 测试用例页：预设库 / 本轮队列 两个子页签 */
 .case-tabs{display:flex;gap:6px;margin-bottom:14px;border-bottom:1px solid var(--line2);padding-bottom:10px}
@@ -671,10 +812,15 @@ tr:last-child td{border-bottom:none}
     <div class="console-hd">
       <span class="ch-t">运行日志</span>
       <span class="ch-new" id="consoleNew"></span>
+      <span class="console-live" id="consoleLive" style="display:none"><span class="live-dot"></span>实时输出</span>
       <span class="spacer"></span>
+      <button class="console-btn" id="btnConsoleH" title="点击循环切换高度（140px / 240px / 450px）">210px</button>
       <button class="console-btn" id="btnConsole" title="收起或展开运行日志">收起</button>
     </div>
     <div class="console" id="console"><span class="ln-none">暂无日志。点右上角的「▶ 运行测试」后，这里会实时显示每一步的输出。</span></div>
+    <div class="console-resizer" id="consoleResizer" title="按住拖拽调整高度，双击重置默认高度">
+      <span class="resizer-bar"></span>
+    </div>
   </div>
 
   <div class="home-sec">当前用例<span id="queueCount" class="cnt"></span>
@@ -756,7 +902,7 @@ tr:last-child td{border-bottom:none}
         <span class="lib-page" id="libPage"></span>
         <button class="btn-ghost" id="libPrev">上一页</button>
         <button class="btn-ghost" id="libNext">下一页</button>
-        <button class="btn-ghost" id="libDel" title="删除所选预设（写入 testcases.yaml，不可恢复）">删除所选</button>
+        <button class="btn-ghost" id="libDel" title="删除所选预设（不可恢复）">删除所选</button>
         <button class="btn-primary" id="libToQueue" title="把所选用例加入「本轮要跑的」">加入本轮</button>
       </div>
     </div>
@@ -768,7 +914,7 @@ tr:last-child td{border-bottom:none}
         <div class="spacer"></div>
         <button class="btn-ghost" id="btnAddQueueRow">+ 添加一行</button>
         <button class="btn-ghost" id="btnClearCases">清空队列</button>
-        <button class="btn-run" onclick="doRun()">▶ 运行测试</button>
+        <button class="btn-run" id="btnRunQueue" onclick="doRun()">▶ 运行测试</button>
       </div>
       <div id="caseRows"></div>
       <div class="hint" id="caseHint">队列还是空的。到「预设用例库」勾选用例后点「加入本轮」，或直接「+ 添加一行」。</div>
@@ -941,7 +1087,7 @@ tr:last-child td{border-bottom:none}
           <button class="reveal-btn" id="wsReveal" onclick="revealCfgPath('workspace')"
                   title="在文件管理器中打开当前生效的工作区目录">📁</button>
         </div>
-        <span class="fhint">非功能性数据（预设用例 testcases.yaml、附件库 uploads/、轮次归档 rounds/、config.yaml）的存放目录。留空使用 ~/.ruiyun-autotest；改动后旧数据自动迁移到新目录</span>
+        <span class="fhint">非功能性数据（预设用例 testcases.db、附件库 uploads/、轮次归档 rounds/、config.yaml）的存放目录。留空使用 ~/.ruiyun-autotest；改动后旧数据自动迁移到新目录</span>
       </div>
       <div class="probe-box" id="appCfgState" style="display:none"></div>
     </div>
@@ -990,32 +1136,101 @@ function renderHistoryPane(){
 /* 首页「当前用例」：与测试用例页的队列同源，状态从运行状态接口取。
    跑完的用例保留在列表里（要回看刚跑的结果），下一轮开始时被新队列替换。 */
 let RUN_CASES=[];
+let LATEST_RUN_ID='';
+
 function renderRunCases(){
   const box=$('runCases'); if(!box) return;
   const n=CASES.filter(c=>c.prompt.trim()).length;
   $('queueCount').textContent=n?`（${n} 条）`:'';
   if(!RUN_CASES.length){
     box.innerHTML='<div class="run-empty">'
-      +(RUNNING?'正在启动，用例即将列出…'
+      +(RUNNING?'<div style="display:flex;align-items:center;gap:9px;padding:12px 4px"><span class="spinner-blue"></span><span>正在启动测试，用例即将列出…</span></div>'
         :'还没有要跑的用例。到 '
          +'<button class="home-link" onclick="switchPage(\'cases\')">测试用例</button>'
          +' 页从预设库里勾选加入本轮，或手动添加一行。')
       +'</div>';
+    const hlWrap=$('homeHistLinkWrap');
+    if(hlWrap) hlWrap.innerHTML='';
     return;
   }
-  const stTxt=s=>s==='PASS'?'<span class="badge b-ok">通过</span>'
-    :s==='FAIL'?'<span class="badge b-fail">断言失败</span>'
-    :s==='UI_FAIL'?'<span class="badge b-uifail">UI 失败</span>'
-    :'<span class="badge b-idle">等待中</span>';
+
+  const total=RUN_CASES.length;
   const done=RUN_CASES.filter(c=>c.status).length;
-  box.innerHTML=`<div class="run-empty" style="padding:0 2px 6px">共 ${RUN_CASES.length} 条`
-    +(RUNNING?`，已完成 ${done} 条`:'')+'</div>'
-    +RUN_CASES.map((c,i)=>`<div class="run-row">
-        <span class="rr-no">${String(i+1).padStart(2,'0')}</span>
-        <span class="rr-prompt" title="${esc(c.prompt||'')}">${esc(c.prompt||'（空）')}</span>
-        ${c.elapsed_s!=null?`<span class="rr-time">${c.elapsed_s}s</span>`:''}
-        ${stTxt(c.status)}
-      </div>`).join('');
+  const passCount=RUN_CASES.filter(c=>c.status==='PASS').length;
+  const failCount=RUN_CASES.filter(c=>c.status&&c.status!=='PASS').length;
+  const isAllDone=total>0&&!RUNNING&&done===total;
+  const firstUnfinished=RUN_CASES.findIndex(c=>!c.status);
+  const inflight=Math.max(1, typeof INFLIGHT==='number'?INFLIGHT:1);
+
+  // 顶栏状态区：运行中显示进度条与动效；全部完成显示跳转历史记录第一条的卡片
+  let topHtml='';
+  if(RUNNING){
+    const pct=total?Math.round((done/total)*100):0;
+    topHtml=`<div class="run-progress-box">
+      <div class="rpb-header">
+        <div class="rpb-title">
+          <span class="spinner-blue"></span>
+          <span>测试执行中</span>
+          <span class="rpb-counts">（已完成 ${done} / ${total} 条）</span>
+        </div>
+        <div class="rpb-pct">${pct}%</div>
+      </div>
+      <div class="rpb-track">
+        <div class="rpb-bar" style="width:${Math.max(pct, 5)}%"></div>
+      </div>
+    </div>`;
+  }else if(isAllDone){
+    const isFullPass=(passCount===total);
+    const bannerCls=isFullPass?'banner-ok':'banner-warn';
+    const icon=isFullPass?'✓':'⚠️';
+    const title=isFullPass?'本轮用例全部测试通过！':'本轮用例测试完成（部分未通过）';
+    const statsText=isFullPass
+      ? `共 <b>${total}</b> 条用例全部通过。测试结果与排查数据已归档。`
+      : `共 <b>${total}</b> 条用例：<span class="t-pass">${passCount} 通过</span> · <span class="t-fail">${failCount} 未通过</span>。测试结果与排查数据已归档。`;
+
+    topHtml=`<div class="run-done-banner ${bannerCls}">
+      <div class="rdb-left">
+        <div class="rdb-title">
+          <span class="rdb-icon">${icon}</span>
+          <span>${title}</span>
+        </div>
+        <div class="rdb-stats">${statsText}</div>
+      </div>
+      <button class="rdb-btn" onclick="goToLatestHistory()" title="跳转至历史记录第一条查看本轮测试报告">查看</button>
+    </div>`;
+  }else{
+    topHtml=`<div class="run-empty" style="padding:0 2px 8px">共 ${total} 条${done?`，已完成 ${done} 条`:''}</div>`;
+  }
+
+  // 用例行渲染
+  const rowsHtml=RUN_CASES.map((c,i)=>{
+    let badgeHtml='';
+    let rowCls='run-row';
+    if(c.status==='PASS'){
+      badgeHtml='<span class="badge b-ok">✓ 通过</span>';
+    }else if(c.status==='FAIL'){
+      badgeHtml='<span class="badge b-fail">✕ 断言失败</span>';
+    }else if(c.status==='UI_FAIL'){
+      badgeHtml='<span class="badge b-uifail">⚠ UI 失败</span>';
+    }else if(RUNNING){
+      if(firstUnfinished!==-1 && i>=firstUnfinished && i<firstUnfinished+inflight){
+        badgeHtml='<span class="badge b-executing"><span class="spinner-inline"></span> 测试中…</span>';
+        rowCls+=' is-executing';
+      }else{
+        badgeHtml='<span class="badge b-idle"><span class="dot-pulse"></span> 排队中</span>';
+      }
+    }else{
+      badgeHtml='<span class="badge b-idle">等待中</span>';
+    }
+    return `<div class="${rowCls}">
+      <span class="rr-no">${String(i+1).padStart(2,'0')}</span>
+      <span class="rr-prompt" title="${esc(c.prompt||'')}">${esc(c.prompt||'（空）')}</span>
+      ${c.elapsed_s!=null?`<span class="rr-time">${c.elapsed_s}s</span>`:''}
+      ${badgeHtml}
+    </div>`;
+  }).join('');
+
+  box.innerHTML=topHtml+rowsHtml;
 }
 
 /* ================= 环境与应用实例 ================= */
@@ -1401,26 +1616,53 @@ function toggleInflightPanel(){
 }
 syncInflightUI();
 
-/* ---------- 运行日志的收起 / 展开 ----------
+/* ---------- 运行日志的收起 / 展开与高度调节 ----------
    页面一打开就显示（没有日志时给一句占位提示，高度也更矮）。
    收起后新到的日志只累计不渲染，标题栏显示「有 N 行新日志」，
    展开时再一次性补齐 —— 收起状态不打断日志采集。 */
 let CONSOLE_OPEN=true, CONSOLE_PENDING=0, CONSOLE_TOUCHED=false;
+let CONSOLE_HEIGHT=parseInt(localStorage.getItem('ruiyun_console_h')||'210',10);
+if(isNaN(CONSOLE_HEIGHT)||CONSOLE_HEIGHT<70) CONSOLE_HEIGHT=210;
+
+function setConsoleHeight(h,save=true){
+  CONSOLE_HEIGHT=Math.max(70,Math.min(Math.round(h),Math.round(window.innerHeight*0.85)));
+  const c=$('console');
+  if(c&&CONSOLE_OPEN) c.style.height=CONSOLE_HEIGHT+'px';
+  const btnH=$('btnConsoleH');
+  if(btnH) btnH.textContent=CONSOLE_HEIGHT+'px';
+  if(save){
+    try{ localStorage.setItem('ruiyun_console_h',String(CONSOLE_HEIGHT)); }catch(e){}
+  }
+}
+
 function setConsoleOpen(open,userAction){
   if(userAction) CONSOLE_TOUCHED=true;
   CONSOLE_OPEN=open;
   $('consoleWrap').classList.toggle('collapsed',!open);
   $('btnConsole').textContent=open?'收起':'展开';
+  const btnH=$('btnConsoleH');
+  if(btnH) btnH.style.display=open?'':'none';
   if(open){
     CONSOLE_PENDING=0;
     syncConsoleNew();
     const c=$('console');
-    c.scrollTop=c.scrollHeight;     // 展开时直接看到最新一行
+    if(c){
+      c.style.height=CONSOLE_HEIGHT+'px';
+      c.scrollTop=c.scrollHeight;     // 展开时直接看到最新一行
+    }
   }
 }
 /* 由渲染日志处调用：有内容就取消占位高度；用户手动收起过就不再自动展开 */
 function noteConsoleContent(hasLines){
   $('consoleWrap').classList.toggle('compact',!hasLines);
+  const c=$('console');
+  if(c&&CONSOLE_OPEN){
+    if(!hasLines&&!localStorage.getItem('ruiyun_console_h')){
+      c.style.height='96px';
+    }else{
+      c.style.height=CONSOLE_HEIGHT+'px';
+    }
+  }
   if(hasLines && !CONSOLE_OPEN && !CONSOLE_TOUCHED) setConsoleOpen(true);
 }
 /* 把服务端的日志行渲染进去（pollStatus 与初始化共用一份口径） */
@@ -1437,7 +1679,64 @@ function syncConsoleNew(){
     ? `有 ${CONSOLE_PENDING} 行新日志` : '';
 }
 $('btnConsole').onclick=()=>setConsoleOpen(!CONSOLE_OPEN,true);
-/* 初始按钮文案与类名对齐初始状态（HTML 里默认就是展开态） */
+
+function initConsoleResizer(){
+  const resizer=$('consoleResizer');
+  const consoleEl=$('console');
+  if(!resizer||!consoleEl) return;
+  let startY=0, startH=0, isDragging=false;
+
+  resizer.addEventListener('mousedown',e=>{
+    if(e.button!==0) return;
+    isDragging=true;
+    startY=e.clientY;
+    startH=consoleEl.getBoundingClientRect().height;
+    resizer.classList.add('is-dragging');
+    document.body.style.cursor='row-resize';
+    document.body.style.userSelect='none';
+
+    const onMouseMove=ev=>{
+      if(!isDragging) return;
+      const dy=ev.clientY-startY;
+      setConsoleHeight(startH+dy,false);
+    };
+    const onMouseUp=()=>{
+      if(!isDragging) return;
+      isDragging=false;
+      resizer.classList.remove('is-dragging');
+      document.body.style.cursor='';
+      document.body.style.userSelect='';
+      setConsoleHeight(consoleEl.getBoundingClientRect().height,true);
+      window.removeEventListener('mousemove',onMouseMove);
+      window.removeEventListener('mouseup',onMouseUp);
+    };
+    window.addEventListener('mousemove',onMouseMove);
+    window.addEventListener('mouseup',onMouseUp);
+  });
+
+  // 双击恢复默认高度 210px
+  resizer.addEventListener('dblclick',()=>{
+    setConsoleHeight(210,true);
+  });
+
+  // 快捷高度循环按钮
+  const btnH=$('btnConsoleH');
+  if(btnH){
+    const PRESETS=[140,240,450];
+    btnH.onclick=()=>{
+      let next=PRESETS.find(p=>p>CONSOLE_HEIGHT+20);
+      if(!next) next=PRESETS[0];
+      setConsoleHeight(next,true);
+    };
+    btnH.textContent=CONSOLE_HEIGHT+'px';
+  }
+
+  // 若已记住高度则应用
+  if(localStorage.getItem('ruiyun_console_h')){
+    setConsoleHeight(CONSOLE_HEIGHT,false);
+  }
+}
+initConsoleResizer();
 setConsoleOpen(true);
 /* 📁 按钮：在访达中打开「当前生效路径」（不是输入框草稿值 ——
    草稿还没保存；生效值以 APP_CFG_DESC 快照为准，弹窗打开/保存后刷新） */
@@ -1632,7 +1931,9 @@ function rmAttach(i,j){
 function syncCaseState(){
   /* 只刷新计数/提示/按钮可用性，不重建输入框（避免打断输入与光标位置） */
   const filled=CASES.filter(c=>c.prompt.trim()).length;
-  $('btnRun').disabled=RUNNING||filled===0;
+  document.querySelectorAll('.btn-run').forEach(b=>{
+    b.disabled=RUNNING||filled===0;
+  });
   $('tabQueueCount').textContent=filled?`（${filled}）`:'';
   $('queueCount').textContent=filled?`（${filled} 条）`:'';
   /* 每条队列用例的「存为预设」：没填提问就没什么可存的，置灰 */
@@ -1660,7 +1961,7 @@ function setCaseTab(which){
   $('ctabQueue').classList.toggle('on',!lib);
 }
 
-/* 把「本轮队列」里的一条存进预设（服务端写入工作区 testcases.yaml）。
+/* 把「本轮队列」里的一条存进预设（服务端写入工作区预设用例库）。
    标签「有什么带什么」：从预设加入的用例带了 labels 就一起存；手写的只存提问。 */
 async function savePreset(i){
   const c=CASES[i]; if(!c) return;
@@ -1711,7 +2012,7 @@ function renderCases(){
           <button class="cl-att" onclick="pickAttach(${i})" title="上传附件：运行时会被投递给被测应用">📎 附件</button>
           <button class="cl-att" onclick="openLib(${i})" title="打开附件库，点击即加入本用例">库${UPLOADS.length?'('+UPLOADS.length+')':''}</button>
           <button class="cl-att cl-save" id="saveCase${i}" onclick="savePreset(${i})"
-                  title="把这条提问存进预设用例库（写入工作区 testcases.yaml）">☆ 存为预设</button>
+                  title="把这条提问存进预设用例库">☆ 存为预设</button>
           <input type="file" multiple style="display:none" id="attFile${i}"
                  onchange="uploadFiles(this.files,${i});this.value=''"/>
         </div>
@@ -1872,7 +2173,7 @@ $('paddBody').onclick=e=>e.stopPropagation();
 $('libDel').onclick=async()=>{
   const ids=[...PSEL];
   if(!ids.length) return;
-  if(!confirm(`删除选中的 ${ids.length} 条预设用例？\n\n会直接写入 testcases.yaml，无法恢复。`)) return;
+  if(!confirm(`删除选中的 ${ids.length} 条预设用例？\n\n该操作无法撤销，确定删除？`)) return;
   try{
     const r=await fetch('/api/preset-cases',{method:'POST',
       headers:{'Content-Type':'application/json'},
@@ -1886,7 +2187,7 @@ $('libDel').onclick=async()=>{
 };
 async function delPresetOne(id){
   if(!id) return;
-  if(!confirm(`删除预设用例 ${id}？\n\n会直接写入 testcases.yaml，无法恢复。`)) return;
+  if(!confirm(`删除预设用例 ${id}？\n\n该操作无法撤销，确定删除？`)) return;
   try{
     const r=await fetch('/api/preset-cases',{method:'POST',
       headers:{'Content-Type':'application/json'},
@@ -1900,7 +2201,7 @@ async function delPresetOne(id){
   }catch(e){ alert('请求失败：'+e.message); }
 }
 
-/* 新增预设：写入 testcases.yaml 后回到第一页并刷新 */
+/* 新增预设：写入预设库后回到第一页并刷新 */
 $('paddOk').onclick=async()=>{
   const prompt=$('paddPrompt').value.trim();
   const msg=$('paddMsg');
@@ -1962,7 +2263,7 @@ function impxRender(d){
   $('impxCount').textContent=`识别到 ${total} 条用例`
     +(d.skipped?`，跳过 ${d.skipped} 行（提问为空）`:'');
   $('impxNote').innerHTML=`已跳过 <b>${d.skipped||0}</b> 行空提问，即将导入 <b>${total}</b> 条。`
-    +'确认后以 <b>追加</b> 方式写入 testcases.yaml，不影响已有用例。'
+    +'确认后以 <b>追加</b> 方式写入预设用例库，不影响已有用例。'
     +((d.items||[]).length<total?`<br><span class="warn">表格只预览前 ${(d.items||[]).length} 条，实际导入全部 ${total} 条。</span>`:'');
   $('impxOk').disabled=!total;
 }
@@ -2069,6 +2370,7 @@ $('btnLibReload').onclick=()=>loadPresetLib();
 /* ================= 运行控制 ================= */
 async function startRun(body){
   if(RUNNING) return;
+  LATEST_RUN_ID='';
   const r=await fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const j=await r.json();
   if(!j.ok){ alert(j.message); return; }
@@ -2128,7 +2430,15 @@ $('btnStop').onclick=async()=>{
 
 function setRunning(v){
   RUNNING=v;
-  $('btnRun').textContent=v?'⟳ 测试运行中…':'▶ 运行测试';
+  document.querySelectorAll('.btn-run').forEach(b=>{
+    if(v){
+      b.innerHTML='<span class="btn-spinner"></span> 测试运行中…';
+      b.classList.add('is-running');
+    }else{
+      b.textContent='▶ 运行测试';
+      b.classList.remove('is-running');
+    }
+  });
   $('btnStop').style.display=v?'':'none';   // 运行中才可终止
   // 状态统一由 syncCaseState 决定，避免绕过 filled===0 的校验把按钮点亮
   syncCaseState();
@@ -2143,8 +2453,10 @@ async function pollStatus(){
   renderStatus(j);
   if(!j.running){
     setRunning(false);
+    if(j.run_id) LATEST_RUN_ID=j.run_id;
     await loadRounds();
-    if(j.archived && j.run_id){ openRound(j.run_id); }
+    if(j.archived && j.run_id){ await openRoundById(j.run_id); }
+    renderRunCases();
   }
 }
 
@@ -2165,7 +2477,10 @@ function paintConsole(lines){
 }
 function renderStatus(j){
   const b=$('statusBadge');
-  if(j.running){ b.className='badge b-run'; b.textContent='运行中 · '+j.elapsed_s+'s'; }
+  if(j.running){
+    b.className='badge b-run';
+    b.innerHTML='<span class="badge-dot-live"></span>运行中 · '+j.elapsed_s+'s';
+  }
   // 正常结束：进程退出码为 0（不依赖 archived —— 它与落盘之间有竞态窗口）
   else if(j.finished_ok||(j.exit_code===0&&j.archived)){
     b.className='badge b-ok'; b.textContent='完成';
@@ -2177,12 +2492,35 @@ function renderStatus(j){
   // 异常结束：非 0 退出码，需要看控制台排查
   else if(j.exit_code!=null){ b.className='badge b-err'; b.textContent='异常退出（退出码 '+j.exit_code+'）'; }
   else { b.className='badge b-idle'; b.textContent='空闲'; }
+
+  const cl=$('consoleLive');
+  if(cl) cl.style.display=j.running?'inline-flex':'none';
+
   // 首页「当前用例」：服务端返回本轮队列（跑完的已从归档补上状态）
   if(Array.isArray(j.cases)&&j.cases.length){
     RUN_CASES=j.cases;
     renderRunCases();
   }
   paintConsole(j.lines);
+}
+
+/* 跳转至历史记录第一条（最新一轮报告） */
+async function goToLatestHistory(runId){
+  switchPage('history');
+  let rid=runId||LATEST_RUN_ID;
+  if(!rid){
+    if(!lastRounds||!lastRounds.length){
+      await loadRounds();
+    }
+    if(lastRounds&&lastRounds.length){
+      rid=lastRounds[0].run_id;
+    }
+  }
+  if(rid){
+    await openRoundById(rid);
+  }
+  const rList=$('roundList');
+  if(rList) rList.scrollTop=0;
 }
 
 

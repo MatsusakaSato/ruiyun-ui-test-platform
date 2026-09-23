@@ -6,9 +6,17 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from core.models import ExecutionTrace, Finding, ToolCall
+
+
+# 结构化返回中承载正文/数据的载荷字段（读取文件、代码、文档等产生的正常内容，不应进行错误特征词误扫）
+PAYLOAD_CONTENT_FIELDS = {
+    "file_content", "content", "text", "markdown", "markdown_content",
+    "body", "data", "code", "answer", "result_text", "doc_content"
+}
 
 
 RULES = {
@@ -40,20 +48,30 @@ def _norm(s: str) -> str:
     return (s or "").strip().lower()
 
 
+def _match_marker(text_lower: str, marker: str) -> bool:
+    """匹配单个错误特征词。对像 exception 这类普通英文单词做边界与上下文防护，避免正文误判。"""
+    m = marker.strip().lower()
+    if not m:
+        return False
+    if m in ("exception", "exception:"):
+        # 匹配异常报错语法特征（如 Exception:、ZeroDivisionError:、Unhandled Exception 等），
+        # 排除普通英语文章/规范中作为「例外/特殊规则」的名词短语
+        return bool(
+            re.search(r"(?:^|[\s\[\(\"'])(?:\w+)?exception\s*:", text_lower)
+            or re.search(r"\b(?:unhandled|uncaught|raised|raise)\s+(?:an?\s+)?(?:\w+)?exception\b", text_lower)
+            or "[exception]" in text_lower
+        )
+    return m in text_lower
+
+
 # ------------------------------ 单条规则 ------------------------------
 
 def check_tool_failed(tc: ToolCall, trace: ExecutionTrace, cfg: dict) -> list:
     markers = [m.lower() for m in cfg.get("error_markers", [])]
-    text = _norm(tc.raw_result)
     hits = []
-
-    # 1) 文本特征词
-    for m in markers:
-        if m in text:
-            hits.append(m)
-
-    # 2) 结构化错误字段
     obj = tc.result_obj
+
+    # 1) 结构化结果优先判定
     if isinstance(obj, dict):
         if obj.get("success") is False:
             hits.append("success=false")
@@ -65,8 +83,40 @@ def check_tool_failed(tc: ToolCall, trace: ExecutionTrace, cfg: dict) -> list:
         elif err not in (None, "", {}, []):
             hits.append("error field")
 
-    # 3) 空结果
-    if not hits and (tc.raw_result is None or not tc.raw_result.strip()):
+        # 显式成功保护：当明确声明 success=True 且无 error 字段时，该调用属于明确成功，
+        # 绝不应将 file_content 等正文载荷里的词句误报为错误
+        if obj.get("success") is True and not hits:
+            return []
+
+        # 未显式声明失败且无 success=True 时：优先扫描诊断/错误类字段，并排除文件正文等数据载荷
+        if not hits:
+            diag_keys = {"error", "stderr", "traceback", "err", "msg", "message", "reason"}
+            diag_text = " ".join(str(obj[k]) for k in diag_keys if k in obj and obj[k]).lower()
+            if diag_text:
+                for m in markers:
+                    if _match_marker(diag_text, m):
+                        hits.append(m)
+
+            if not hits:
+                # 剔除正文载荷字段后的其他元信息
+                meta_parts = [
+                    str(v) for k, v in obj.items()
+                    if k.lower() not in PAYLOAD_CONTENT_FIELDS and v is not None
+                ]
+                meta_text = " ".join(meta_parts).lower()
+                for m in markers:
+                    if _match_marker(meta_text, m):
+                        hits.append(m)
+
+    else:
+        # 2) 非结构化文本结果
+        text = _norm(tc.raw_result)
+        for m in markers:
+            if _match_marker(text, m):
+                hits.append(m)
+
+    # 3) 空结果判定
+    if not hits and (tc.raw_result is None or not str(tc.raw_result).strip()):
         return [_mk("TOOL_RESULT_MISSING", trace, f"{tc.name} 返回空结果",
                     tool=tc.name, step=tc.index)]
 

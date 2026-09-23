@@ -104,9 +104,9 @@
   <div class="meta">
     <span><b>应用版本</b> 2.0.14</span>
     <span><b>Bundle</b> com.yanxiu.srtclaw</span>
-    <span><b>运行模式</b> 离线回放</span>
-    <span><b>生成时间</b> 2026-09-18 10:15:29</span>
-    <span><b>总耗时</b> 0.7s</span>
+    <span><b>运行模式</b> UI 自动化</span>
+    <span><b>生成时间</b> 2026-09-23 10:58:25</span>
+    <span><b>总耗时</b> 17.3s</span>
   </div>
 </header>
 
@@ -116,19 +116,19 @@
 <div class="kpis">
   <div class="kpi">
     <div class="label">本轮用例</div>
-    <div class="value v-acc">2</div>
-    <div class="foot">2 通过 / 0 断言失败 / 0 UI 失败</div>
+    <div class="value v-acc">1</div>
+    <div class="foot">0 通过 / 1 断言失败 / 0 UI 失败</div>
   </div>
   <div class="kpi">
     <div class="label">问题发现</div>
-    <div class="value v-ok">0</div>
-    <div class="foot">P0 阻断 0 · P1 严重 0</div>
+    <div class="value v-bad">1</div>
+    <div class="foot">P0 阻断 1 · P1 严重 0</div>
   </div>
 </div>
 
 <div class="note">
   <b>评估范围</b><br/>
-  · 本轮共 2 条用例，逐条独立会话执行，评估只覆盖这些用例自身产生的日志。<br/>
+  · 本轮共 1 条用例，逐条独立会话执行，评估只覆盖这些用例自身产生的日志。<br/>
   · 判定基于 12 条硬性缺陷断言规则（阈值见 config.yaml），不对生成内容的质量做评价。<br/>
   · 下方第 2 节按用例逐个展示；每条用例只呈现它自己的调用链路、耗时用量与命中的问题，不做跨用例汇总。
 </div>
@@ -140,95 +140,56 @@
 
 <div class="case-block">
   <div class="case-hd">
-    <span class="badge b-pass">
-      通过
+    <span class="badge b-fail">
+      断言失败
     </span>
-    <b>备课-001</b>
+    <b>用例 1</b>
     <span class="mono">CASE-001</span>
-    <span class="mono" style="color:var(--tx3)">sess_1a0aec93f96_be4f24</span>
+    <span class="mono" style="color:var(--tx3)">sess_1a0cc32ffd4_dd1316</span>
   </div>
 
-  <div class="case-prompt"><b>提示词：</b>为统编版三年级上册《大青树下的小学》生成一课时教学设计，包含教学目标、教学重难点、教学过程和板书设计。</div>
+  <div class="case-prompt"><b>提示词：</b>请帮我生成一份空白的word文档</div>
 
   <!-- 调用链路 -->
   <h3>调用链路（执行顺序）</h3>
-    <div class="mono" style="color:var(--tx3)">纯文本应答，无工具调用</div>
+    <div class="chain"><span class="ct">read_skill_file</span> → <span class="ct">read_skill_file</span> → <span class="ct">ToolSearch</span> → <span class="ct">doc_create</span> → <span class="ct">doc_check</span></div>
+    <div class="mono" style="color:var(--tx3);margin-top:4px">5 次调用 · 2 步思考 · 答复 156 字</div>
 
   <!-- 客观信息 -->
   <h3>客观信息</h3>
   <div class="tbl-wrap">
   <table>
-    <tr><td>平台实测耗时</td><td style="text-align:right"><b>0.0s</b></td></tr>
-    <tr><td>首响延迟（提问 → 模型响应）</td><td style="text-align:right"><b>5.81s</b></td></tr>
-    <tr><td>生成时长</td><td style="text-align:right"><b>5.09s</b></td></tr>
-    <tr><td>会话时长</td><td style="text-align:right"><b>10.9s</b></td></tr>
-    <tr><td>对话轮次 / 工具调用 / 思考步</td><td style="text-align:right"><b>1 / 0 / 1</b></td></tr>
-    <tr><td>调用成功 / 失败 / 截断</td><td style="text-align:right"><b>0 / 0 / 0</b></td></tr>
+    <tr><td>平台实测耗时</td><td style="text-align:right"><b>17.2s</b></td></tr>
+    <tr><td>首响延迟（提问 → 模型响应）</td><td style="text-align:right"><b>3.5s</b></td></tr>
+    <tr><td>生成时长</td><td style="text-align:right"><b>8.49s</b></td></tr>
+    <tr><td>会话时长</td><td style="text-align:right"><b>11.99s</b></td></tr>
+    <tr><td>对话轮次 / 工具调用 / 思考步</td><td style="text-align:right"><b>1 / 5 / 2</b></td></tr>
+    <tr><td>调用成功 / 失败 / 截断</td><td style="text-align:right"><b>4 / 1 / 0</b></td></tr>
     <tr><td>调用链路一致性</td>
         <td style="text-align:right"><span class="badge b-pass">
           一致</span></td></tr>
     <tr><td>会话收尾</td>
         <td style="text-align:right"><span class="badge b-pass">
           正常收尾</span></td></tr>
-    <tr><td>token 估算（入 / 出 / 合计）</td><td style="text-align:right"><b>29 / 293 / <span class="v-acc">322</span></b></td></tr>
+    <tr><td>token 估算（入 / 出 / 合计）</td><td style="text-align:right"><b>6059 / 252 / <span class="v-acc">6311</span></b></td></tr>
   </table>
   </div>
 
   <!-- 该用例问题发现 -->
   <h3>问题发现</h3>
-    <div class="none-banner" style="padding:22px 18px">
-      <div class="big" style="font-size:17px">✓ 该用例未发现问题</div>
-      <div class="sm">已按全部硬性缺陷规则检查该用例的调用链路，未命中任何规则。</div>
-    </div>
-</div>
-
-<div class="case-block">
-  <div class="case-hd">
-    <span class="badge b-pass">
-      通过
-    </span>
-    <b>备课-002</b>
-    <span class="mono">CASE-002</span>
-    <span class="mono" style="color:var(--tx3)">sess_1a0aec3ab5c_021a56</span>
-  </div>
-
-  <div class="case-prompt"><b>提示词：</b>帮我生成统编版四年级下册《乡下人家》教学设计，要求落实分层教学，要素完备、层次分明，情境贴合目标，活动安排得当，重难点突出。</div>
-
-  <!-- 调用链路 -->
-  <h3>调用链路（执行顺序）</h3>
-    <div class="mono" style="color:var(--tx3)">纯文本应答，无工具调用</div>
-
-  <!-- 客观信息 -->
-  <h3>客观信息</h3>
-  <div class="tbl-wrap">
-  <table>
-    <tr><td>平台实测耗时</td><td style="text-align:right"><b>0.0s</b></td></tr>
-    <tr><td>首响延迟（提问 → 模型响应）</td><td style="text-align:right"><b>4.88s</b></td></tr>
-    <tr><td>生成时长</td><td style="text-align:right"><b>4.13s</b></td></tr>
-    <tr><td>会话时长</td><td style="text-align:right"><b>9.01s</b></td></tr>
-    <tr><td>对话轮次 / 工具调用 / 思考步</td><td style="text-align:right"><b>1 / 0 / 1</b></td></tr>
-    <tr><td>调用成功 / 失败 / 截断</td><td style="text-align:right"><b>0 / 0 / 0</b></td></tr>
-    <tr><td>调用链路一致性</td>
-        <td style="text-align:right"><span class="badge b-pass">
-          一致</span></td></tr>
-    <tr><td>会话收尾</td>
-        <td style="text-align:right"><span class="badge b-pass">
-          正常收尾</span></td></tr>
-    <tr><td>token 估算（入 / 出 / 合计）</td><td style="text-align:right"><b>35 / 195 / <span class="v-acc">230</span></b></td></tr>
-  </table>
-  </div>
-
-  <!-- 该用例问题发现 -->
-  <h3>问题发现</h3>
-    <div class="none-banner" style="padding:22px 18px">
-      <div class="big" style="font-size:17px">✓ 该用例未发现问题</div>
-      <div class="sm">已按全部硬性缺陷规则检查该用例的调用链路，未命中任何规则。</div>
-    </div>
+    <div class="finding">
+      <div class="f-hd">
+        <span class="badge b-p0">P0</span>
+        <b>工具调用失败</b>
+        <span class="mono">TOOL_CALL_FAILED</span>
+<span class="mono">read_skill_file</span><span class="mono" style="color:var(--tx3)">步骤 #3</span>      </div>
+      <div class="f-detail"><b>具体表现：</b>read_skill_file 调用失败（命中特征：exception）</div>
+<div class="f-impact"><b>影响：</b>该步骤未获得有效数据，agent 可能基于缺失信息继续作答或转向低质量替代路径</div><div class="evi">{&#34;success&#34;: true, &#34;skill_ref&#34;: &#34;skill_ref_3a2ce0a39ae3&#34;, &#34;skill_name&#34;: &#34;local-doc-edit&#34;, &#34;relative_path&#34;: &#34;SKILL.md&#34;, &#34;file_content&#34;: &#34;---\nname: local-doc-edit\ndescription: Load this Skill after off</div>    </div>
 </div>
 
 <div class="note" style="margin-top:26px">
   <b>判定与口径说明</b><br/>
-  · 本报告全部数据来自本轮 2 条用例产生的会话日志，不含任何历史数据。<br/>
+  · 本报告全部数据来自本轮 1 条用例产生的会话日志，不含任何历史数据。<br/>
   · 「问题发现」基于 12 条硬性缺陷断言规则（阈值见 config.yaml），不对生成内容的质量做评价。<br/>
   · token 为字符量折算的估算值（应用日志未记录官方 usage）；步骤级耗时日志未记录，耗时仅到会话/消息级。<br/>
   · 复现率由 UI 自动化重复执行同一配方统计，&lt;3 次样本的结论仅供参考。

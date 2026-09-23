@@ -247,7 +247,7 @@ PROMPT_HEADERS = ("提问", "提示词", "问题", "用例", "任务", "输入",
                   "question", "case", "input", "query", "command")
 SCENE_HEADERS = ("场景", "分类", "模块", "业务", "scene", "category")
 TARGET_HEADERS = ("测试目标", "目标", "产物", "类型", "输出", "target", "expect", "type")
-# 允许出现在「测试目标」里的值（与 testcases.yaml 的 labels 口径一致）
+# 允许出现在「测试目标」里的值（与预设用例库的 labels 口径一致）
 KNOWN_TARGETS = ("word", "ppt", "html", "pdf", "excel", "network")
 
 
@@ -332,7 +332,7 @@ def rows_to_items(rows: list, head_idx, prompt_col: int,
                 skipped += 1
             continue
         raw_targets = get(target_col)
-        # 只认白名单里的目标（与 testcases.yaml 的 labels.targets 口径一致）
+        # 只认白名单里的目标（与预设用例库的 labels.targets 口径一致）
         targets = [t for t in KNOWN_TARGETS
                    if re.search(rf"(?<![a-z]){t}(?![a-z])", raw_targets, re.I)]
         items.append({"prompt": _CELL_NL.sub("\n", prompt),

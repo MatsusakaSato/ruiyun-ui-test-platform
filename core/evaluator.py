@@ -34,7 +34,6 @@ from core.format_check import evaluate as format_evaluate
 from core.llm_client import chat, load_config, probe_provider, redact
 from core.log_parser import parse_session
 from core.settings import config_path as _config_file
-from core.settings import preset_path as _preset_file
 from core.settings import rounds_dir as _rounds_dir
 from core.safety_scan import build_sources, exempt_hits, redlines, scan
 from core.trajectory import _est_tokens
@@ -88,21 +87,15 @@ def _norm_prompt(s) -> str:
 
 
 def _preset_labels() -> dict:
-    """testcases.yaml 索引：normalize(prompt) -> labels。
+    """预设库索引：normalize(prompt) -> labels。
 
     **只按问题原文索引，绝不按 id**：界面手输用例的 id 是按序号自动生成的
     （CASE-001…），与预设 id 必然重名但完全不是同一条问题 ——
     按 id 兜底会把预设的 targets/scene 凭空安到无关用例上，
     曾导致「没有任何产物要求，却被判产物未产出」得 0 分。
     """
-    data = _read_yaml(_preset_file()) or {}
-    out = {}
-    for c in (data.get("cases") or []):
-        if isinstance(c, dict):
-            key = _norm_prompt(c.get("prompt"))
-            if key:
-                out[key] = c.get("labels") or {}
-    return out
+    from core.testcase_db import get_preset_labels_index
+    return get_preset_labels_index()
 
 
 def load_round_bundle(run_id: str) -> dict:

@@ -135,7 +135,7 @@ rules:
     - "connection aborted"
     - "max retries exceeded"
     - "tool_call_failed"
-    - "exception"
+    - "exception:"
   # 判定为「自然收尾」的结尾字符（截断检测用）
   natural_endings: ["。", "！", "？", "；", "：", "\n", ")", "）", "]", "】",
                     "”", "’", ".", "!", "?", ";", ":", "…", "—", "～", "~",

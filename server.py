@@ -32,6 +32,9 @@ from core.llm_client import (clear_config, load_config, probe_provider,
 from core.settings import (clear_overrides, config_path, describe,
                            effective_config, preset_path, rounds_dir,
                            save_overrides, uploads_dir, user_workspace)
+from core.testcase_db import (add_preset_case, add_preset_cases, count_cases,
+                              delete_preset_cases, get_preset_cases, init_db,
+                              query_preset_cases)
 
 ROOT = Path(__file__).resolve().parent
 WEB = ROOT / "web"
@@ -633,198 +636,7 @@ def normalize_cases(raw) -> list:
 
 def preset_cases() -> list:
     """读取用户工作区的预设用例，供界面「导入预设」使用。"""
-    f = preset_path()
-    if not f.is_file():
-        return []
-    data = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
-    return normalize_cases(data.get("cases") or [])
-
-
-# ---------------------------------------------------------------- 预设用例管理
-# 用户可在界面直接新增 / 删除预设用例（写回工作区 testcases.yaml）。
-# 头部注释（cases: 之前的全部内容）在写回时原样保留，只重写用例清单本体。
-
-
-def _load_preset_raw() -> list:
-    """读取预设用例的原始 dict 列表（未经 normalize，保留全部字段）。"""
-    f = preset_path()
-    if not f.is_file():
-        return []
-    try:
-        data = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
-    except Exception:
-        return []
-    return [c for c in (data.get("cases") or []) if isinstance(c, dict)]
-
-
-def _save_preset_raw(cases: list) -> None:
-    """原子写回 testcases.yaml。
-
-    文件头部注释（首个 cases: 行之前）原样保留 —— 头部记录了标签口径说明，
-    丢掉会让预设标签变成无解释的裸数据；用例清单本体用 yaml 重写
-    （逐条追加式文本改写在千条规模下不可靠）。
-    """
-    f = preset_path()
-    head = ""
-    if f.is_file():
-        text = f.read_text(encoding="utf-8")
-        m = re.search(r"^cases:\s*$", text, flags=re.M)
-        if m:
-            head = text[: m.start()]
-    body = yaml.safe_dump({"cases": cases}, allow_unicode=True, sort_keys=False,
-                          default_flow_style=False,
-                          width=4096)   # 足够宽：prompt 不折行，未触碰条目保持字节级原样
-    tmp = f.with_name(f.name + ".tmp")
-    tmp.write_text(head + body, encoding="utf-8")
-    os.replace(tmp, f)
-
-
-def _norm_label_input(payload: dict) -> dict:
-    """把界面传来的标签整理成 testcases.yaml 的三维度口径，空值不落盘。"""
-    labels = payload.get("labels") or {}
-    out: dict = {}
-    scene = str(labels.get("scene") or "").strip()
-    if scene:
-        out["scene"] = scene
-    targets = [str(t).strip() for t in (labels.get("targets") or []) if str(t).strip()]
-    if targets:
-        out["targets"] = targets
-    if labels.get("attachment") is True:
-        out["attachment"] = True
-    return out
-
-
-def _case_seq(case: dict) -> int:
-    """CASE-NNN 里的 N，用于「自然序」排列（CASE-2 要排在 CASE-10 前面）。"""
-    m = re.match(r"^CASE-(\d+)$", str(case.get("id") or ""))
-    return int(m.group(1)) if m else 0
-
-
-def query_preset_cases(keyword: str = "", scene: str = "", targets=None,
-                       attachment: str = "", ids=None, limit: int = 50,
-                       offset: int = 0, order: str = "desc") -> dict:
-    """预设用例库的分页查询（未来会有上千条，界面不能整份拉）。
-
-    keyword 匹配 id / name / prompt；scene、targets、attachment 与标签口径一致；
-    ids 用于按 id 精确取一批（把已排进本轮队列的用例取回来用）。
-    返回 {cases, total, offset, limit, scenes, targets}：scenes/targets 供筛选下拉使用，
-    统计口径是**整个库**（不受当前筛选影响），否则筛完就选不回来了。
-    """
-    all_cases = _load_preset_raw()
-    scenes = sorted({str((c.get("labels") or {}).get("scene") or "").strip()
-                     for c in all_cases} - {""})
-    all_targets = sorted({str(t) for c in all_cases
-                          for t in ((c.get("labels") or {}).get("targets") or [])})
-
-    rows = all_cases
-    idset = {str(i).strip() for i in (ids or []) if str(i).strip()}
-    if idset:
-        rows = [c for c in rows if str(c.get("id") or "") in idset]
-    kw = str(keyword or "").strip().lower()
-    if kw:
-        rows = [c for c in rows
-                if kw in str(c.get("id") or "").lower()
-                or kw in str(c.get("name") or "").lower()
-                or kw in str(c.get("prompt") or "").lower()]
-    scene = str(scene or "").strip()
-    if scene:
-        rows = [c for c in rows if str((c.get("labels") or {}).get("scene") or "") == scene]
-    want = [str(t).strip() for t in (targets or []) if str(t).strip()]
-    if want:
-        rows = [c for c in rows
-                if set(want) & set(str(t) for t in ((c.get("labels") or {}).get("targets") or []))]
-    if attachment == "yes":
-        rows = [c for c in rows if (c.get("labels") or {}).get("attachment") is True]
-    elif attachment == "no":
-        rows = [c for c in rows if (c.get("labels") or {}).get("attachment") is not True]
-
-    # 默认新加的在前：文件里是追加写入的，倒序看更符合「刚加的用得最多」
-    rows = sorted(rows, key=_case_seq, reverse=(order != "asc"))
-    total = len(rows)
-    limit = max(1, min(int(limit or 50), 500))
-    offset = max(0, int(offset or 0))
-    return {
-        "cases": rows[offset:offset + limit],
-        "total": total, "offset": offset, "limit": limit,
-        "scenes": scenes, "targets": all_targets,
-    }
-
-
-def add_preset_case(payload: dict) -> tuple[bool, str, dict | None]:
-    """新增一条预设用例：id 取现有最大 CASE-N 顺延，保证唯一。"""
-    prompt = str(payload.get("prompt") or "").strip()
-    if not prompt:
-        return False, "提问为必填", None
-    cases = _load_preset_raw()
-    n = 0
-    for c in cases:
-        m = re.match(r"^CASE-(\d+)$", str(c.get("id") or ""))
-        if m:
-            n = max(n, int(m.group(1)))
-    case = {
-        "id": f"CASE-{n + 1:03d}",
-        "name": str(payload.get("name") or "").strip() or f"自定义-{n + 1:03d}",
-        "prompt": prompt,
-        "expect_tools": [str(t).strip() for t in (payload.get("expect_tools") or [])
-                         if str(t).strip()],
-        "labels": _norm_label_input(payload),
-    }
-    cases.append(case)
-    _save_preset_raw(cases)
-    return True, f"已新增 {case['id']}（预设共 {len(cases)} 条）", case
-
-
-def add_preset_cases(items: list) -> tuple[bool, str, int]:
-    """批量新增预设用例（Excel 导入用）：一次写盘，避免上千条逐条重写文件。
-
-    items 里每项 {prompt, scene?, targets?}；提问为空的直接跳过并计数。
-    """
-    rows = []
-    for it in (items or []):
-        if not isinstance(it, dict):
-            continue
-        prompt = str(it.get("prompt") or "").strip()
-        if not prompt:
-            continue
-        rows.append({
-            "prompt": prompt,
-            "labels": _norm_label_input({
-                "labels": {"scene": it.get("scene") or "",
-                           "targets": it.get("targets") or []}}),
-        })
-    if not rows:
-        return False, "没有可导入的用例（提问列全为空？）", 0
-    cases = _load_preset_raw()
-    n = 0
-    for c in cases:
-        m = re.match(r"^CASE-(\d+)$", str(c.get("id") or ""))
-        if m:
-            n = max(n, int(m.group(1)))
-    for it in rows:
-        n += 1
-        cases.append({
-            "id": f"CASE-{n:03d}",
-            "name": f"导入-{n:03d}",
-            "prompt": it["prompt"],
-            "expect_tools": [],
-            "labels": it["labels"],
-        })
-    _save_preset_raw(cases)
-    return True, f"已导入 {len(rows)} 条（预设共 {len(cases)} 条）", len(rows)
-
-
-def delete_preset_cases(ids) -> tuple[bool, str, int]:
-    """按 id 批量删除预设用例；未命中任何 id 时报错而非静默成功。"""
-    idset = {str(i).strip() for i in (ids or []) if str(i).strip()}
-    if not idset:
-        return False, "未指定要删除的用例 id", 0
-    cases = _load_preset_raw()
-    kept = [c for c in cases if str(c.get("id") or "") not in idset]
-    removed = len(cases) - len(kept)
-    if removed == 0:
-        return False, "没有匹配到要删除的预设用例（可能已被删除）", 0
-    _save_preset_raw(kept)
-    return True, f"已删除 {removed} 条（预设剩余 {len(kept)} 条）", removed
+    return get_preset_cases()
 
 
 def query_rounds(date_from: str = "", date_to: str = "", keyword: str = "",
@@ -1410,7 +1222,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({
                     "app_name": app_cfg.get("name", "") or "睿云智能工作台",
                     "case_timeout_s": eff.get("case_timeout_s", 1200),
-                    "preset_count": len(preset_cases()),
+                    "preset_count": count_cases(),
                     # 自动点击的配置默认值：界面开关打开时按它初始化
                     # （界面只把开关值随本次运行下发，不写回 config.yaml）
                     "auto_confirm": bool(app_cfg.get("auto_confirm", False)),
@@ -1589,7 +1401,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": True, "message": "已保存到服务端", **public_config()})
             return
 
-        # 预设用例管理：新增 / 删除（直接写 testcases.yaml，保留文件头注释）
+        # 预设用例管理：新增 / 删除（写本地 SQLite 数据库）
         if path == "/api/preset-cases":
             try:
                 length = int(self.headers.get("Content-Length") or 0)
@@ -1895,6 +1707,7 @@ def main() -> int:
         print("⚠ 已临时放行局域网访问（--allow-lan）：私网 IP 可访问本服务，"
               "公网来源仍被拒绝。用完请去掉该参数重启。", flush=True)
 
+    init_db()
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"测试平台服务已启动: http://{args.host}:{args.port}", flush=True)
     try:

@@ -356,12 +356,19 @@ def load_cases(cases_file: str) -> list:
     """载入本轮用例。
 
     优先使用调用方手动指定的用例文件（界面输入 → 临时文件），
-    未指定时回退到用户工作区的 testcases.yaml 预设。
+    未指定时回退到用户工作区的本地 SQLite 预设数据库。
     """
-    path = Path(cases_file) if cases_file else preset_path()
+    if not cases_file:
+        from core.testcase_db import get_preset_cases
+        return get_preset_cases()
+
+    path = Path(cases_file)
     if not path.is_file():
         _log(f"  找不到用例文件：{path}")
         return []
+    if path.suffix.lower() in (".db", ".sqlite", ".sqlite3"):
+        from core.testcase_db import get_preset_cases
+        return get_preset_cases(path)
     text = path.read_text(encoding="utf-8")
     if path.suffix.lower() == ".json":
         data = json.loads(text)
@@ -416,7 +423,7 @@ def main() -> int:
     app_version, bundle_id = read_app_version(cfg)
     max_iter = read_max_iterations(cfg)
     run_mode = "UI 自动化"
-    case_src = "手动输入" if args.cases_file else "testcases.yaml 预设"
+    case_src = "手动输入" if args.cases_file else "本地 SQLite 预设库"
     _log(_RULE)
     _log("睿云智能工作台 · UI 测试平台")
     _log(f"应用版本 {app_version or '未读取到'} · 用例 {len(cases)} 条（{case_src}）")
