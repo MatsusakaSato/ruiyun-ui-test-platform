@@ -23,7 +23,7 @@ import time
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 import yaml
 
@@ -135,14 +135,15 @@ def save_upload(name: str, data: bytes) -> Path:
 
 # ---------------------------------------------------------------- 环境档案
 def read_env_config() -> dict:
-    """读取可选的运行环境档案，以及当前默认项。
+    """读取运行环境档案，以及当前默认项。
 
     返回 {current, profiles:[{key,label,desc}], app_running}
+
+    只认「开发」与「线上」两档，**不允许出现别的选项**：
+    环境变量在应用启动时注入，档位越多越容易不知道自己连的是哪个后端；
+    配置里若写了别的档案，这里也不会下发（界面上选不到）。
     环境在应用【启动时】注入，运行中的实例无法改环境，
     因此前端在应用运行时会把选择器置为只读。
-
-    profiles 为空时前端会显示「未定义任何环境档案」而不是空选择框：
-    界面「环境」下拉的选项**完全**来自这里，列表为空就等于按钮没字、点不动。
     """
     cfg = _config_dict()
     app = cfg.get("app") or {}
@@ -155,19 +156,15 @@ def read_env_config() -> dict:
     }
     profiles = []
     for key in ("dev", "production"):
-        if key not in profiles_cfg:
-            continue
-        label, desc = labels.get(key, (key, f"注入 {len(profiles_cfg.get(key) or {})} 个变量"))
-        profiles.append({"key": key, "label": label, "desc": desc})
-    # 允许配置里出现自定义档案
-    for key, pairs in profiles_cfg.items():
-        if key in ("dev", "production"):
-            continue
-        profiles.append({"key": key, "label": key,
-                         "desc": f"自定义档案（{len(pairs or {})} 个变量）"})
+        # 配置里没有该档案时补一份空档案：两档永远都在，选择器不会空
+        pairs = profiles_cfg.get(key) or {}
+        label, desc = labels[key]
+        profiles.append({"key": key, "label": label, "desc": desc,
+                         "vars": len(pairs)})
+    if current not in ("dev", "production"):
+        current = "dev"          # 配置写了别的值 / 为空 → 界面回落到「开发」
     return {
         "current": current,
-        "none_label": "不注入",
         "profiles": profiles,
         "config_path": str(CONFIG_PATH),
         "app_running": app_is_running(cfg),
@@ -183,10 +180,10 @@ def write_env_profile(profile: str) -> tuple[bool, str]:
     """
     cfg = _config_dict()
     app = cfg.get("app") or {}
-    valid = set((app.get("env_profiles") or {}).keys()) | {""}
+    del app                       # 只认两档：不跟随配置里的自定义档案
     key = str(profile or "").strip()
-    if key not in valid:
-        return False, f"未知环境档案：{key or '(空)'}"
+    if key not in ("dev", "production"):
+        return False, f"未知环境档案：{key or '(空)'}（只支持 dev / production）"
 
     path = config_path()          # 缺失时按模版自愈初始化
     try:
@@ -289,6 +286,10 @@ class RunState:
         self.exit_code: int | None = None
         self.console_path: Path | None = None
         self.stopped: bool = False
+        # 本轮要跑的用例（提问 + 结果状态），首页「当前用例」据此渲染实时进度：
+        # 排队时只有 prompt（还没跑），跑完由 status() 从归档里补上状态与耗时。
+        self.queue: list = []
+        self._queue_filled_for: str = ""
 
     # ------------------------------------------------ 运行控制
     def start(self, cases: int, repro_times: int, repro_limit: int,
@@ -303,6 +304,14 @@ class RunState:
             self.lines.clear()
             self.exit_code = None
             self.stopped = False
+            # 记录本轮队列：首页「当前用例」在跑的过程中就能列出来（此时还没有归档）
+            self.queue = [{
+                "case_id": str(c.get("id") or f"CASE-{i:03d}"),
+                "name": str(c.get("name") or ""),
+                "prompt": str(c.get("prompt") or ""),
+                "status": "", "elapsed_s": None,
+            } for i, c in enumerate(case_items or [], 1)]
+            self._queue_filled_for = ""
 
             run_dir = ROUNDS / self.run_id
             run_dir.mkdir(parents=True, exist_ok=True)
@@ -436,7 +445,29 @@ class RunState:
                 "finished_ok": finished_ok,
                 "stopped": self.stopped,
                 "lines": list(self.lines)[-90:],
+                "cases": self._queue_status(done_ok),
             }
+
+    def _queue_status(self, archived: bool) -> list:
+        """本轮用例的当前状态：跑完的从归档里补齐，没跑完的保持「等待中」。
+
+        只在归档真的落盘后补一次（_queue_filled_for 记住已补的 run_id），
+        否则每次轮询都要读一遍 JSON。返回浅拷贝，避免调用方改到内部状态。
+        """
+        if archived and self.run_id and self._queue_filled_for != self.run_id:
+            try:
+                f = ROUNDS / self.run_id / "round_summary.json"
+                rows = (json.loads(f.read_text(encoding="utf-8")) or {}).get("cases") or []
+                by_id = {str(r.get("case_id") or ""): r for r in rows}
+                for i, q in enumerate(self.queue):
+                    r = by_id.get(q["case_id"]) or (rows[i] if i < len(rows) else None)
+                    if r:
+                        q["status"] = str(r.get("status") or "")
+                        q["elapsed_s"] = r.get("elapsed_s")
+                self._queue_filled_for = self.run_id
+            except Exception:
+                pass          # 归档读失败不影响状态接口：保持「等待中」
+        return [dict(q) for q in self.queue]
 
 
 STATE = RunState()
@@ -663,11 +694,67 @@ def _norm_label_input(payload: dict) -> dict:
     return out
 
 
+def _case_seq(case: dict) -> int:
+    """CASE-NNN 里的 N，用于「自然序」排列（CASE-2 要排在 CASE-10 前面）。"""
+    m = re.match(r"^CASE-(\d+)$", str(case.get("id") or ""))
+    return int(m.group(1)) if m else 0
+
+
+def query_preset_cases(keyword: str = "", scene: str = "", targets=None,
+                       attachment: str = "", ids=None, limit: int = 50,
+                       offset: int = 0, order: str = "desc") -> dict:
+    """预设用例库的分页查询（未来会有上千条，界面不能整份拉）。
+
+    keyword 匹配 id / name / prompt；scene、targets、attachment 与标签口径一致；
+    ids 用于按 id 精确取一批（把已排进本轮队列的用例取回来用）。
+    返回 {cases, total, offset, limit, scenes, targets}：scenes/targets 供筛选下拉使用，
+    统计口径是**整个库**（不受当前筛选影响），否则筛完就选不回来了。
+    """
+    all_cases = _load_preset_raw()
+    scenes = sorted({str((c.get("labels") or {}).get("scene") or "").strip()
+                     for c in all_cases} - {""})
+    all_targets = sorted({str(t) for c in all_cases
+                          for t in ((c.get("labels") or {}).get("targets") or [])})
+
+    rows = all_cases
+    idset = {str(i).strip() for i in (ids or []) if str(i).strip()}
+    if idset:
+        rows = [c for c in rows if str(c.get("id") or "") in idset]
+    kw = str(keyword or "").strip().lower()
+    if kw:
+        rows = [c for c in rows
+                if kw in str(c.get("id") or "").lower()
+                or kw in str(c.get("name") or "").lower()
+                or kw in str(c.get("prompt") or "").lower()]
+    scene = str(scene or "").strip()
+    if scene:
+        rows = [c for c in rows if str((c.get("labels") or {}).get("scene") or "") == scene]
+    want = [str(t).strip() for t in (targets or []) if str(t).strip()]
+    if want:
+        rows = [c for c in rows
+                if set(want) & set(str(t) for t in ((c.get("labels") or {}).get("targets") or []))]
+    if attachment == "yes":
+        rows = [c for c in rows if (c.get("labels") or {}).get("attachment") is True]
+    elif attachment == "no":
+        rows = [c for c in rows if (c.get("labels") or {}).get("attachment") is not True]
+
+    # 默认新加的在前：文件里是追加写入的，倒序看更符合「刚加的用得最多」
+    rows = sorted(rows, key=_case_seq, reverse=(order != "asc"))
+    total = len(rows)
+    limit = max(1, min(int(limit or 50), 500))
+    offset = max(0, int(offset or 0))
+    return {
+        "cases": rows[offset:offset + limit],
+        "total": total, "offset": offset, "limit": limit,
+        "scenes": scenes, "targets": all_targets,
+    }
+
+
 def add_preset_case(payload: dict) -> tuple[bool, str, dict | None]:
     """新增一条预设用例：id 取现有最大 CASE-N 顺延，保证唯一。"""
     prompt = str(payload.get("prompt") or "").strip()
     if not prompt:
-        return False, "提示词（prompt）为必填", None
+        return False, "提问为必填", None
     cases = _load_preset_raw()
     n = 0
     for c in cases:
@@ -687,6 +774,45 @@ def add_preset_case(payload: dict) -> tuple[bool, str, dict | None]:
     return True, f"已新增 {case['id']}（预设共 {len(cases)} 条）", case
 
 
+def add_preset_cases(items: list) -> tuple[bool, str, int]:
+    """批量新增预设用例（Excel 导入用）：一次写盘，避免上千条逐条重写文件。
+
+    items 里每项 {prompt, scene?, targets?}；提问为空的直接跳过并计数。
+    """
+    rows = []
+    for it in (items or []):
+        if not isinstance(it, dict):
+            continue
+        prompt = str(it.get("prompt") or "").strip()
+        if not prompt:
+            continue
+        rows.append({
+            "prompt": prompt,
+            "labels": _norm_label_input({
+                "labels": {"scene": it.get("scene") or "",
+                           "targets": it.get("targets") or []}}),
+        })
+    if not rows:
+        return False, "没有可导入的用例（提问列全为空？）", 0
+    cases = _load_preset_raw()
+    n = 0
+    for c in cases:
+        m = re.match(r"^CASE-(\d+)$", str(c.get("id") or ""))
+        if m:
+            n = max(n, int(m.group(1)))
+    for it in rows:
+        n += 1
+        cases.append({
+            "id": f"CASE-{n:03d}",
+            "name": f"导入-{n:03d}",
+            "prompt": it["prompt"],
+            "expect_tools": [],
+            "labels": it["labels"],
+        })
+    _save_preset_raw(cases)
+    return True, f"已导入 {len(rows)} 条（预设共 {len(cases)} 条）", len(rows)
+
+
 def delete_preset_cases(ids) -> tuple[bool, str, int]:
     """按 id 批量删除预设用例；未命中任何 id 时报错而非静默成功。"""
     idset = {str(i).strip() for i in (ids or []) if str(i).strip()}
@@ -699,6 +825,83 @@ def delete_preset_cases(ids) -> tuple[bool, str, int]:
         return False, "没有匹配到要删除的预设用例（可能已被删除）", 0
     _save_preset_raw(kept)
     return True, f"已删除 {removed} 条（预设剩余 {len(kept)} 条）", removed
+
+
+def query_rounds(date_from: str = "", date_to: str = "", keyword: str = "",
+                 limit: int = 20, offset: int = 0) -> dict:
+    """轮次归档的分页查询：时间范围 + 关键字，返回当前页。
+
+    两遍扫描：先只读 round_summary.json 做筛选与计数（轻），
+    再对需要返回的那一页做完整加载（含产物清单，重）。
+    整份加载上千轮会把界面拖死，所以这里必须分页。
+    """
+    rows = []
+    if ROUNDS.is_dir():
+        for d in sorted(ROUNDS.iterdir(), reverse=True):
+            f = d / "round_summary.json"
+            if not d.is_dir() or not f.is_file():
+                continue
+            try:
+                s = json.loads(f.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            rows.append((d, s))
+    total_all = len(rows)
+
+    df = str(date_from or "").strip()[:10]
+    dt = str(date_to or "").strip()[:10]
+    kw = str(keyword or "").strip().lower()
+    filtered = []
+    for d, s in rows:
+        day = str(s.get("finished_at") or "")[:10]
+        if df and (not day or day < df):
+            continue
+        if dt and (not day or day > dt):
+            continue
+        if kw:
+            hay = " ".join([d.name, str(s.get("finished_at") or "")]
+                           + [str(c.get("prompt") or "") for c in (s.get("cases") or [])])
+            if kw not in hay.lower():
+                continue
+        filtered.append((d, s))
+
+    total = len(filtered)
+    limit = max(1, min(int(limit or 20), 200))
+    offset = max(0, int(offset or 0))
+    page = filtered[offset:offset + limit]
+
+    # 只给这一页做完整加载：产物清单 / 评估是否存在都在这里补齐
+    out = []
+    for d, s in page:
+        detail = _backfill_case_artifacts(_load_json(d, "round_detail.json"), d)
+        evaluation = _load_evaluation(d)
+        out.append({
+            # run_id 一律取**目录名**：路由 /api/rounds/<rid> 按目录名解析
+            "run_id": d.name,
+            "finished_at": s.get("finished_at", ""),
+            "run_mode": s.get("run_mode", ""),
+            "elapsed_s": s.get("elapsed_s", 0),
+            "app_version": s.get("app_version", ""),
+            "summary": s.get("summary") or {},
+            "repro_summary": s.get("repro_summary") or {},
+            "round_skills": s.get("round_skills") or [],
+            "has_evaluation": evaluation is not None,
+            "artifacts": _round_artifacts(d, evaluation, detail),
+            "cases": [{
+                "case_id": c.get("case_id", ""),
+                "name": c.get("name", ""),
+                "prompt": c.get("prompt", ""),
+                "status": c.get("status", ""),
+            } for c in (s.get("cases") or [])],
+        })
+    days = sorted({str(s.get("finished_at") or "")[:10] for _, s in rows if s.get("finished_at")},
+                  reverse=True)
+    return {
+        "rounds": out, "total": total, "total_all": total_all,
+        "offset": offset, "limit": limit,
+        # 最新一天供界面把「结束日期」默认填成今天（有归档数据的那天）
+        "latest_day": days[0] if days else "",
+    }
 
 
 def reveal_in_finder(target: str) -> tuple[bool, str]:
@@ -959,54 +1162,6 @@ def _load_evaluation(d: Path) -> dict | None:
     return _load_json(d, "evaluation.json")
 
 
-def list_rounds() -> list:
-    out = []
-    if not ROUNDS.is_dir():
-        return out
-    for d in sorted(ROUNDS.iterdir(), reverse=True):
-        f = d / "round_summary.json"
-        if not d.is_dir() or not f.is_file():
-            continue
-        try:
-            s = json.loads(f.read_text(encoding="utf-8"))
-            # 只回传列表预览必需的字段：case_id / name / prompt / status
-            cases = [
-                {
-                    "case_id": c.get("case_id", ""),
-                    "name": c.get("name", ""),
-                    "prompt": c.get("prompt", ""),
-                    "status": c.get("status", ""),
-                }
-                for c in (s.get("cases") or [])
-            ]
-            # 产物概览也要随列表下发：轮次列表左侧的「📁 产物目录」链接就是用它渲染的，
-            # 只在详情接口给的话，列表里永远看不到这个入口（只有点进去才发现）。
-            # 产物来自 round_detail.json（流水线落盘，跑完即有）；旧轮次没有该字段时
-            # 回落到 evaluation.json —— 两种来源由 _artifact_items 统一处理。
-            detail = _load_json(d, "round_detail.json")
-            # 老归档的产物清单要就地校正（抽取规则修过），列表与详情必须同一份数据
-            detail = _backfill_case_artifacts(detail, d)
-            evaluation = _load_evaluation(d)
-            out.append({
-                # run_id 一律取**目录名**：路由 /api/rounds/<rid> 是按目录名解析的，
-                # 若这里用 JSON 内的 run_id，两者不一致时列表点开的是另一个轮次（或 404）。
-                "run_id": d.name,
-                "finished_at": s.get("finished_at", ""),
-                "run_mode": s.get("run_mode", ""),
-                "elapsed_s": s.get("elapsed_s", 0),
-                "app_version": s.get("app_version", ""),
-                "summary": s.get("summary") or {},
-                "repro_summary": s.get("repro_summary") or {},
-                "round_skills": s.get("round_skills") or [],
-                "has_evaluation": evaluation is not None,
-                "artifacts": _round_artifacts(d, evaluation, detail),
-                "cases": cases,
-            })
-        except Exception:
-            continue
-    return out
-
-
 def _artifact_items(detail: dict | None, evaluation: dict | None) -> tuple:
     """本轮产物条目，按来源优先级取第一份**非空**清单：
 
@@ -1214,8 +1369,20 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/rounds":
-            # dir：轮次归档根目录的绝对路径，前端据此拼出各轮次文件夹的访达链接
-            self._json({"rounds": list_rounds(), "dir": str(ROUNDS)})
+            # 分页 + 时间范围 + 关键字：轮次会越攒越多，界面不能整份拉
+            q = parse_qs(urlparse(self.path).query)
+            one = lambda k, d="": (q.get(k) or [d])[0]
+            def _int(name, default):
+                try:
+                    return int(one(name) or default)
+                except (TypeError, ValueError):
+                    return default
+            self._json({
+                "dir": str(ROUNDS),
+                **query_rounds(date_from=one("date_from"), date_to=one("date_to"),
+                               keyword=one("keyword"),
+                               limit=_int("limit", 20), offset=_int("offset", 0)),
+            })
             return
 
         if path.startswith("/api/rounds/"):
@@ -1252,9 +1419,20 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": str(exc)}, 500)
             return
 
-        # 预设用例（仅作为「导入」来源，不作为默认执行内容）
+        # 预设用例库：分页 + 关键词 / 场景 / 目标 / 附件筛选
         if path == "/api/preset-cases":
-            self._json({"cases": preset_cases()})
+            q = parse_qs(urlparse(self.path).query)
+            one = lambda k, d="": (q.get(k) or [d])[0]
+            try:
+                limit = int(one("limit", "50") or 50)
+                offset = int(one("offset", "0") or 0)
+            except ValueError:
+                limit, offset = 50, 0
+            self._json(query_preset_cases(
+                keyword=one("keyword"), scene=one("scene"),
+                targets=[t for t in one("targets").split(",") if t.strip()],
+                attachment=one("attachment"), ids=[i for i in one("ids").split(",") if i.strip()],
+                limit=limit, offset=offset, order=one("order", "desc")))
             return
 
         # 可选环境档案 + 应用运行状态（前端据此做只读/可编辑互斥）
@@ -1424,12 +1602,84 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": ok, "message": msg, "case": case},
                            200 if ok else 400)
                 return
+            if action == "add_many":
+                ok, msg, added = add_preset_cases(body.get("items") or [])
+                self._json({"ok": ok, "message": msg, "added": added},
+                           200 if ok else 400)
+                return
             if action == "delete":
                 ok, msg, removed = delete_preset_cases(body.get("ids") or [])
                 self._json({"ok": ok, "message": msg, "removed": removed},
                            200 if ok else 400)
                 return
-            self._json({"ok": False, "message": "未知操作（支持 add / delete）"}, 400)
+            self._json({"ok": False, "message": "未知操作（支持 add / add_many / delete）"}, 400)
+            return
+
+        # Excel / CSV 用例表导入：解析成表格 + 自动认列，先给界面预览再落盘
+        if path == "/api/preset-import":
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                body = {}
+            name = str(body.get("name") or "")
+            raw = body.get("data_base64") or ""
+            if not name or not raw:
+                self._json({"ok": False, "message": "缺少文件名或文件内容"}, 400)
+                return
+            try:
+                data = base64.b64decode(raw)
+            except Exception as exc:
+                self._json({"ok": False, "message": f"文件内容无法解码：{exc}"}, 400)
+                return
+            if len(data) > 20 * 1024 * 1024:
+                self._json({"ok": False, "message": "文件超过 20MB，请拆分后再导入"}, 400)
+                return
+            try:
+                from core.xlsx_reader import detect_columns, read_table, rows_to_items
+                table = read_table(name, data)
+                meta = detect_columns(table["rows"])
+                got = rows_to_items(table["rows"], meta["head_idx"],
+                                    meta["prompt_col"], meta["scene_col"],
+                                    meta["target_col"])
+            except Exception as exc:
+                self._json({"ok": False,
+                            "message": f"解析失败：{type(exc).__name__}: {exc}"}, 400)
+                return
+            items = got["items"]
+            # 允许指定列（界面改过列映射后重新取值）
+            if body.get("prompt_col") is not None:
+                try:
+                    meta["prompt_col"] = int(body.get("prompt_col"))
+                    meta["scene_col"] = (None if body.get("scene_col") in (None, "", -1)
+                                         else int(body.get("scene_col")))
+                    meta["target_col"] = (None if body.get("target_col") in (None, "", -1)
+                                          else int(body.get("target_col")))
+                    got = rows_to_items(table["rows"], meta["head_idx"],
+                                        meta["prompt_col"], meta["scene_col"],
+                                        meta["target_col"])
+                    items = got["items"]
+                except (TypeError, ValueError):
+                    pass
+            # parse_only：只回解析结果供界面预览确认，不写盘
+            if body.get("parse_only"):
+                self._json({
+                    "ok": True, "file": name, "sheet": table.get("sheet", ""),
+                    "header": meta["header"],
+                    "width": max([len(meta["header"])]
+                                 + [len(r) for r in table["rows"][:50]] + [0]),
+                    "prompt_col": meta["prompt_col"], "scene_col": meta["scene_col"],
+                    "target_col": meta["target_col"],
+                    "total": len(items), "skipped": got["skipped"],
+                    "items": [{"prompt": it["prompt"][:200], "scene": it["scene"],
+                               "targets": it["targets"]} for it in items[:200]],
+                    "items_total": len(items),
+                })
+                return
+            ok, msg, added = add_preset_cases(items)
+            self._json({"ok": ok, "message": msg, "added": added,
+                        "file": name, "total": len(items), "skipped": got["skipped"]},
+                       200 if ok else 400)
             return
 
         # 应用设置：保存被测应用路径 / 日志根目录（写 .app_settings.json，0600）。
