@@ -17,6 +17,7 @@ from core.settings import (
     effective_config,
 )
 try:                                    # scripts/ 已取消跟踪（见 .gitignore），
+    # pyrefly: ignore [missing-import]
     from scripts.verify_env import _decode_cmd   # 该模块只在开发机上存在，
 except ImportError:                     # 缺失时跳过对应的那一条测试即可
     _decode_cmd = None
