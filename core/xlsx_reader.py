@@ -242,11 +242,15 @@ def read_table(filename: str, data: bytes, max_rows: int = 5000) -> dict:
 
 
 # ------------------------------------------------------------------ 列识别
-# 提问列的候选表头（命中即用；都没有时回落到「最长的文本列」）
-PROMPT_HEADERS = ("提问", "提示词", "问题", "用例", "任务", "输入", "prompt",
-                  "question", "case", "input", "query", "command")
+# 提问列的候选表头（避免命中「输入类型」等非提问列）
+PROMPT_HEADERS = ("query内容", "query", "提问内容", "问题内容", "提问", "提示词", "问题",
+                  "用例", "任务", "prompt", "question", "case", "command")
 SCENE_HEADERS = ("场景", "分类", "模块", "业务", "scene", "category")
-TARGET_HEADERS = ("测试目标", "目标", "产物", "类型", "输出", "target", "expect", "type")
+TARGET_HEADERS = ("测试目标", "目标", "产物", "target", "expect")
+NAME_HEADERS = ("序号", "编号", "用例名称", "用例名", "名称", "标题", "id", "name", "seq", "no")
+ATTACHMENT_HEADERS = ("附件", "参考文件", "文件", "附件名", "attachment", "attachments", "file")
+SKILL_HEADERS = ("skill", "技能", "期望工具", "工具", "expect_tools", "tools")
+
 # 允许出现在「测试目标」里的值（与预设用例库的 labels 口径一致）
 KNOWN_TARGETS = ("word", "ppt", "html", "pdf", "excel", "network")
 
@@ -257,10 +261,69 @@ def _is_header_like(value: str) -> bool:
     return bool(v) and len(v) <= 12 and not re.search(r"[。？?!！,，;；]", v)
 
 
+def infer_targets(prompt: str, attachment_name: str = "", raw_target: str = "") -> list[str]:
+    """从显式目标列、附件后缀或提问语义推断测试目标（word, ppt, excel, pdf, html, network）。"""
+    targets = []
+    # 1. 显式白名单匹配
+    if raw_target:
+        targets = [t for t in KNOWN_TARGETS
+                   if re.search(rf"(?<![a-z]){t}(?![a-z])", raw_target, re.I)]
+        if targets:
+            return targets
+
+    # 2. 从附件文件名后缀推断
+    att_lower = (attachment_name or "").lower()
+    if any(att_lower.endswith(ext) for ext in (".docx", ".doc", ".dotx")):
+        targets.append("word")
+    elif any(att_lower.endswith(ext) for ext in (".pptx", ".ppt", ".potx")):
+        targets.append("ppt")
+    elif any(att_lower.endswith(ext) for ext in (".xlsx", ".xls", ".csv")):
+        targets.append("excel")
+    elif att_lower.endswith(".pdf"):
+        targets.append("pdf")
+    elif any(att_lower.endswith(ext) for ext in (".html", ".htm")):
+        targets.append("html")
+
+    # 3. 从提问文本语义推断
+    try:
+        from core.case_intent import infer_target_kinds
+        kinds, _ = infer_target_kinds(prompt)
+        kind_map = {
+            "docx": "word", "pptx": "ppt", "excel": "excel",
+            "pdf": "pdf", "html": "html", "network": "network"
+        }
+        for k in kinds:
+            mapped = kind_map.get(k)
+            if mapped and mapped not in targets:
+                targets.append(mapped)
+    except Exception:
+        pass
+
+    # 4. 中文关键词特征补全
+    p_lower = (prompt or "").lower()
+    if not targets:
+        if any(w in p_lower for w in ["教案", "教学设计", "文档", "word", "撰写", "通报", "总结", "方案", "通知", "倡议书", "计划", "发言稿", "讲话稿"]):
+            targets.append("word")
+        elif any(w in p_lower for w in ["ppt", "课件", "幻灯片", "演示文稿"]):
+            targets.append("ppt")
+        elif any(w in p_lower for w in ["excel", "表格", "成绩表", "统计表", "排班表", "清单"]):
+            targets.append("excel")
+        elif "pdf" in p_lower:
+            targets.append("pdf")
+        elif "html" in p_lower or "网页" in p_lower:
+            targets.append("html")
+
+    # 5. 兜底为 word
+    if not targets:
+        targets.append("word")
+
+    return targets
+
+
 def detect_columns(rows: list) -> dict:
     """认出表头行与各列下标（不取值）。
 
-    返回 {header, head_idx, prompt_col, scene_col, target_col, total_rows, preview}
+    返回 {header, head_idx, prompt_col, scene_col, target_col, name_col, attachment_col, skill_col, total_rows, preview}
     识别不出的列一律留 None —— 不硬套，界面会让用户自己选列。
     """
     rows = [list(r or []) for r in (rows or [])]
@@ -268,7 +331,8 @@ def detect_columns(rows: list) -> dict:
         rows.pop()                       # 去掉尾部整行空行
     if not rows:
         return {"header": [], "head_idx": None, "prompt_col": 0, "scene_col": None,
-                "target_col": None, "total_rows": 0, "preview": []}
+                "target_col": None, "name_col": None, "attachment_col": None,
+                "skill_col": None, "total_rows": 0, "preview": []}
 
     def width(r):
         return max((i for i, c in enumerate(r) if (c or "").strip()), default=-1) + 1
@@ -285,21 +349,32 @@ def detect_columns(rows: list) -> dict:
     body = rows[(head_idx + 1) if head_idx is not None else 0:]
     width = max([width(header)] + [width(r) for r in body] + [1])
 
-    def header_col(names, exclude=()):
+    def header_col(names, exclude=(), forbid=()):
         for i in range(width):
             text = ((header[i] if i < len(header) else "") or "").strip().lower()
             if not text or i in exclude:
+                continue
+            if any(f.lower() in text for f in forbid):
                 continue
             for nm in names:
                 if nm.lower() in text:
                     return i
         return None
 
-    prompt_col = header_col(PROMPT_HEADERS)
+    # 提问列排除含有「类型/type」的列（如「输入类型」不是提问）
+    prompt_col = header_col(PROMPT_HEADERS, forbid=("类型", "type"))
     scene_col = header_col(SCENE_HEADERS,
                            exclude=({prompt_col} if prompt_col is not None else set()))
+    name_col = header_col(NAME_HEADERS,
+                          exclude={c for c in (prompt_col, scene_col) if c is not None})
+    attachment_col = header_col(ATTACHMENT_HEADERS,
+                                exclude={c for c in (prompt_col, scene_col, name_col) if c is not None})
+    skill_col = header_col(SKILL_HEADERS,
+                           exclude={c for c in (prompt_col, scene_col, name_col, attachment_col) if c is not None})
     target_col = header_col(TARGET_HEADERS,
-                            exclude={c for c in (prompt_col, scene_col) if c is not None})
+                            exclude={c for c in (prompt_col, scene_col, name_col, attachment_col, skill_col) if c is not None},
+                            forbid=("输入类型",))
+
     if prompt_col is None:
         # 没有可识别的表头 → 取「正文里平均文本最长」的一列当提问列
         sums, counts = {}, {}
@@ -310,16 +385,28 @@ def detect_columns(rows: list) -> dict:
                     sums[i] = sums.get(i, 0) + len(v)
                     counts[i] = counts.get(i, 0) + 1
         prompt_col = max(sums, key=lambda i: sums[i] / max(1, counts[i]), default=0)
-    return {"header": [c or "" for c in header], "head_idx": head_idx,
-            "prompt_col": prompt_col, "scene_col": scene_col, "target_col": target_col,
-            "total_rows": len(body), "preview": body}
+
+    return {
+        "header": [c or "" for c in header],
+        "head_idx": head_idx,
+        "prompt_col": prompt_col,
+        "scene_col": scene_col,
+        "target_col": target_col,
+        "name_col": name_col,
+        "attachment_col": attachment_col,
+        "skill_col": skill_col,
+        "total_rows": len(body),
+        "preview": body,
+    }
 
 
 def rows_to_items(rows: list, head_idx, prompt_col: int,
-                  scene_col=None, target_col=None) -> dict:
-    """按给定列下标从数据行里取值（用户可在界面上改列）。
+                  scene_col=None, target_col=None,
+                  name_col=None, attachment_col=None,
+                  skill_col=None) -> dict:
+    """按给定列下标从数据行里取值。
 
-    返回 {items, skipped}：items 每项 {"prompt", "scene", "targets", "raw_target"}；
+    返回 {items, skipped}：items 每项包含 prompt, scene, targets, name, attachments 等；
     提问列为空的行会被跳过并计入 skipped。
     """
     body = rows[(head_idx + 1) if isinstance(head_idx, int) else 0:]
@@ -331,14 +418,74 @@ def rows_to_items(rows: list, head_idx, prompt_col: int,
             if any((c or "").strip() for c in r):
                 skipped += 1
             continue
+
+        scene = get(scene_col)
         raw_targets = get(target_col)
-        # 只认白名单里的目标（与预设用例库的 labels.targets 口径一致）
-        targets = [t for t in KNOWN_TARGETS
-                   if re.search(rf"(?<![a-z]){t}(?![a-z])", raw_targets, re.I)]
-        items.append({"prompt": _CELL_NL.sub("\n", prompt),
-                      "scene": get(scene_col),
-                      "targets": targets,
-                      "raw_target": raw_targets})
+        att_val = get(attachment_col)
+        name_val = get(name_col)
+        skill_val = get(skill_col)
+
+        # 智能推断或白名单匹配测试目标
+        targets = infer_targets(prompt, attachment_name=att_val, raw_target=raw_targets)
+
+        # 附件与输入形式
+        attachments = [att_val] if att_val else []
+        has_attachment = bool(attachments or any("附件" in str(c) for c in r))
+
+        # 名称与 ID 生成
+        cid = None
+        if name_val.isdigit():
+            seq_num = int(name_val)
+            cid = f"CASE-{seq_num:03d}"
+            cname = f"{scene}-{seq_num:03d}" if scene else f"用例-{seq_num:03d}"
+        elif name_val:
+            cname = name_val
+        else:
+            cname = ""
+
+        # 期望工具
+        expect_tools = [s.strip() for s in skill_val.split(",") if s.strip()] if skill_val else []
+
+        # 构造标签与元数据
+        labels = {
+            "scene": scene,
+            "targets": targets,
+            "attachment": has_attachment,
+        }
+        header = rows[head_idx] if isinstance(head_idx, int) and 0 <= head_idx < len(rows) else []
+        known_cols = {c for c in (prompt_col, scene_col, target_col, name_col, attachment_col, skill_col) if c is not None}
+        for j, h in enumerate(header):
+            if j not in known_cols:
+                h_name = (h or "").strip()
+                val = get(j)
+                if h_name and val:
+                    if "学科" in h_name:
+                        labels["subject"] = val
+                    elif "难度" in h_name:
+                        labels["difficulty"] = val
+                    elif "输入类型" in h_name:
+                        labels["input_type"] = val
+                    elif "强项" in h_name:
+                        labels["is_strength"] = val
+                    else:
+                        labels[h_name] = val
+
+        item = {
+            "prompt": _CELL_NL.sub("\n", prompt),
+            "scene": scene,
+            "targets": targets,
+            "raw_target": raw_targets,
+            "name": cname,
+            "attachments": attachments,
+            "attachment": has_attachment,
+            "expect_tools": expect_tools,
+            "labels": labels,
+        }
+        if cid:
+            item["id"] = cid
+
+        items.append(item)
+
     return {"items": items, "skipped": skipped}
 
 
@@ -346,5 +493,8 @@ def detect_table(rows: list) -> dict:
     """一步到位：认列 + 取值（供不便分两步的调用方使用）。"""
     meta = detect_columns(rows)
     got = rows_to_items(rows, meta["head_idx"], meta["prompt_col"],
-                        meta["scene_col"], meta["target_col"])
+                        meta["scene_col"], meta["target_col"],
+                        meta.get("name_col"), meta.get("attachment_col"),
+                        meta.get("skill_col"))
     return {k: v for k, v in meta.items() if k != "preview"} | got
+

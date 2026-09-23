@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import mimetypes
 import os
 import re
 import shutil
@@ -1180,6 +1181,26 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(404, "dashboard 未找到".encode(), "text/plain; charset=utf-8")
             return
 
+        # 静态资源支持（css, js, 图标等）
+        if path.startswith(("/css/", "/js/")) or path in ("/favicon.ico",):
+            rel_path = path.lstrip("/")
+            target = (WEB / rel_path).resolve()
+            web_root = WEB.resolve()
+            try:
+                # 严防路径穿越
+                if target.is_file() and target.is_relative_to(web_root):
+                    mime, _ = mimetypes.guess_type(str(target))
+                    if mime and (mime.startswith("text/") or mime == "application/javascript"):
+                        content_type = f"{mime}; charset=utf-8"
+                    else:
+                        content_type = mime or "application/octet-stream"
+                    self._send(200, target.read_bytes(), content_type)
+                    return
+            except (ValueError, RuntimeError):
+                pass
+            self._send(404, b"Not Found", "text/plain; charset=utf-8")
+            return
+
         if path == "/api/rounds":
             # 分页 + 时间范围 + 关键字：轮次会越攒越多，界面不能整份拉
             q = parse_qs(urlparse(self.path).query)
@@ -1444,35 +1465,41 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._json({"ok": False, "message": f"文件内容无法解码：{exc}"}, 400)
                 return
-            if len(data) > 20 * 1024 * 1024:
-                self._json({"ok": False, "message": "文件超过 20MB，请拆分后再导入"}, 400)
+            if len(data) > 100 * 1024 * 1024:
+                self._json({"ok": False, "message": "文件超过 100MB，请拆分后再导入"}, 400)
                 return
             try:
                 from core.xlsx_reader import detect_columns, read_table, rows_to_items
                 table = read_table(name, data)
                 meta = detect_columns(table["rows"])
+
+                def _get_col(key, default):
+                    if key not in body:
+                        return default
+                    v = body.get(key)
+                    if v in (None, "", -1, "-1"):
+                        return None
+                    try:
+                        return int(v)
+                    except (TypeError, ValueError):
+                        return default
+
+                meta["prompt_col"] = _get_col("prompt_col", meta["prompt_col"])
+                meta["scene_col"] = _get_col("scene_col", meta["scene_col"])
+                meta["target_col"] = _get_col("target_col", meta["target_col"])
+                meta["name_col"] = _get_col("name_col", meta.get("name_col"))
+                meta["attachment_col"] = _get_col("attachment_col", meta.get("attachment_col"))
+
                 got = rows_to_items(table["rows"], meta["head_idx"],
                                     meta["prompt_col"], meta["scene_col"],
-                                    meta["target_col"])
+                                    meta["target_col"], meta.get("name_col"),
+                                    meta.get("attachment_col"), meta.get("skill_col"))
             except Exception as exc:
                 self._json({"ok": False,
                             "message": f"解析失败：{type(exc).__name__}: {exc}"}, 400)
                 return
             items = got["items"]
-            # 允许指定列（界面改过列映射后重新取值）
-            if body.get("prompt_col") is not None:
-                try:
-                    meta["prompt_col"] = int(body.get("prompt_col"))
-                    meta["scene_col"] = (None if body.get("scene_col") in (None, "", -1)
-                                         else int(body.get("scene_col")))
-                    meta["target_col"] = (None if body.get("target_col") in (None, "", -1)
-                                          else int(body.get("target_col")))
-                    got = rows_to_items(table["rows"], meta["head_idx"],
-                                        meta["prompt_col"], meta["scene_col"],
-                                        meta["target_col"])
-                    items = got["items"]
-                except (TypeError, ValueError):
-                    pass
+
             # parse_only：只回解析结果供界面预览确认，不写盘
             if body.get("parse_only"):
                 self._json({
@@ -1480,15 +1507,26 @@ class Handler(BaseHTTPRequestHandler):
                     "header": meta["header"],
                     "width": max([len(meta["header"])]
                                  + [len(r) for r in table["rows"][:50]] + [0]),
-                    "prompt_col": meta["prompt_col"], "scene_col": meta["scene_col"],
+                    "prompt_col": meta["prompt_col"],
+                    "scene_col": meta["scene_col"],
                     "target_col": meta["target_col"],
+                    "name_col": meta.get("name_col"),
+                    "attachment_col": meta.get("attachment_col"),
                     "total": len(items), "skipped": got["skipped"],
-                    "items": [{"prompt": it["prompt"][:200], "scene": it["scene"],
-                               "targets": it["targets"]} for it in items[:200]],
+                    "items": [{
+                        "id": it.get("id", ""),
+                        "name": it.get("name", ""),
+                        "prompt": it["prompt"][:200],
+                        "scene": it.get("scene", ""),
+                        "targets": it.get("targets", []),
+                        "attachments": it.get("attachments", []),
+                    } for it in items[:200]],
                     "items_total": len(items),
                 })
                 return
-            ok, msg, added = add_preset_cases(items)
+
+            replace_mode = bool(body.get("replace"))
+            ok, msg, added = add_preset_cases(items, replace=replace_mode)
             self._json({"ok": ok, "message": msg, "added": added,
                         "file": name, "total": len(items), "skipped": got["skipped"]},
                        200 if ok else 400)

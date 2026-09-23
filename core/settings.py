@@ -166,9 +166,17 @@ def effective_config(cfg: dict) -> dict:
     # Windows：若配置里留的是 macOS 绝对路径（同一份 config 从 mac 机器带过来），
     # 视为无效值一并回退本机默认 —— 否则 max_iterations 基线读不到，
     # 死循环判定就失去了比对基准。
-    if sys.platform == "win32" and agent_cfg.startswith("/"):
-        agent_cfg = ""
-    paths["agent_config"] = str(Path(agent_cfg or DEFAULT_AGENT_CONFIG).expanduser())
+    if sys.platform == "win32":
+        if agent_cfg.startswith("/"):
+            agent_cfg = ""
+        default_cfg = (
+            DEFAULT_AGENT_CONFIG
+            if not str(DEFAULT_AGENT_CONFIG).startswith("~") and not str(DEFAULT_AGENT_CONFIG).startswith("/")
+            else os.path.join(os.environ.get("APPDATA") or r"C:\Users\Default\AppData\Roaming", "srtclaw", "config", "config.yaml")
+        )
+    else:
+        default_cfg = DEFAULT_AGENT_CONFIG
+    paths["agent_config"] = str(Path(agent_cfg or default_cfg).expanduser())
     return cfg
 
 

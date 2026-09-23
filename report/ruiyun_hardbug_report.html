@@ -105,8 +105,8 @@
     <span><b>应用版本</b> 2.0.14</span>
     <span><b>Bundle</b> com.yanxiu.srtclaw</span>
     <span><b>运行模式</b> UI 自动化</span>
-    <span><b>生成时间</b> 2026-09-23 10:58:25</span>
-    <span><b>总耗时</b> 17.3s</span>
+    <span><b>生成时间</b> 2026-09-23 14:02:43</span>
+    <span><b>总耗时</b> 18.9s</span>
   </div>
 </header>
 
@@ -145,33 +145,33 @@
     </span>
     <b>用例 1</b>
     <span class="mono">CASE-001</span>
-    <span class="mono" style="color:var(--tx3)">sess_1a0cc32ffd4_dd1316</span>
+    <span class="mono" style="color:var(--tx3)">sess_1a0ccdbb6e7_f24c81</span>
   </div>
 
   <div class="case-prompt"><b>提示词：</b>请帮我生成一份空白的word文档</div>
 
   <!-- 调用链路 -->
   <h3>调用链路（执行顺序）</h3>
-    <div class="chain"><span class="ct">read_skill_file</span> → <span class="ct">read_skill_file</span> → <span class="ct">ToolSearch</span> → <span class="ct">doc_create</span> → <span class="ct">doc_check</span></div>
-    <div class="mono" style="color:var(--tx3);margin-top:4px">5 次调用 · 2 步思考 · 答复 156 字</div>
+    <div class="chain"><span class="ct">read_skill_file</span> → <span class="ct">read_skill_file</span> → <span class="ct">ToolSearch</span> → <span class="ct">doc_create</span> → <span class="ct">doc_create</span> → <span class="ct">doc_check</span></div>
+    <div class="mono" style="color:var(--tx3);margin-top:4px">6 次调用 · 3 步思考 · 答复 236 字</div>
 
   <!-- 客观信息 -->
   <h3>客观信息</h3>
   <div class="tbl-wrap">
   <table>
-    <tr><td>平台实测耗时</td><td style="text-align:right"><b>17.2s</b></td></tr>
-    <tr><td>首响延迟（提问 → 模型响应）</td><td style="text-align:right"><b>3.5s</b></td></tr>
-    <tr><td>生成时长</td><td style="text-align:right"><b>8.49s</b></td></tr>
-    <tr><td>会话时长</td><td style="text-align:right"><b>11.99s</b></td></tr>
-    <tr><td>对话轮次 / 工具调用 / 思考步</td><td style="text-align:right"><b>1 / 5 / 2</b></td></tr>
-    <tr><td>调用成功 / 失败 / 截断</td><td style="text-align:right"><b>4 / 1 / 0</b></td></tr>
+    <tr><td>平台实测耗时</td><td style="text-align:right"><b>18.7s</b></td></tr>
+    <tr><td>首响延迟（提问 → 模型响应）</td><td style="text-align:right"><b>3.55s</b></td></tr>
+    <tr><td>生成时长</td><td style="text-align:right"><b>9.97s</b></td></tr>
+    <tr><td>会话时长</td><td style="text-align:right"><b>13.52s</b></td></tr>
+    <tr><td>对话轮次 / 工具调用 / 思考步</td><td style="text-align:right"><b>1 / 6 / 3</b></td></tr>
+    <tr><td>调用成功 / 失败 / 截断</td><td style="text-align:right"><b>5 / 1 / 0</b></td></tr>
     <tr><td>调用链路一致性</td>
         <td style="text-align:right"><span class="badge b-pass">
           一致</span></td></tr>
     <tr><td>会话收尾</td>
         <td style="text-align:right"><span class="badge b-pass">
           正常收尾</span></td></tr>
-    <tr><td>token 估算（入 / 出 / 合计）</td><td style="text-align:right"><b>6059 / 252 / <span class="v-acc">6311</span></b></td></tr>
+    <tr><td>token 估算（入 / 出 / 合计）</td><td style="text-align:right"><b>6112 / 294 / <span class="v-acc">6406</span></b></td></tr>
   </table>
   </div>
 
@@ -182,9 +182,9 @@
         <span class="badge b-p0">P0</span>
         <b>工具调用失败</b>
         <span class="mono">TOOL_CALL_FAILED</span>
-<span class="mono">read_skill_file</span><span class="mono" style="color:var(--tx3)">步骤 #3</span>      </div>
-      <div class="f-detail"><b>具体表现：</b>read_skill_file 调用失败（命中特征：exception）</div>
-<div class="f-impact"><b>影响：</b>该步骤未获得有效数据，agent 可能基于缺失信息继续作答或转向低质量替代路径</div><div class="evi">{&#34;success&#34;: true, &#34;skill_ref&#34;: &#34;skill_ref_3a2ce0a39ae3&#34;, &#34;skill_name&#34;: &#34;local-doc-edit&#34;, &#34;relative_path&#34;: &#34;SKILL.md&#34;, &#34;file_content&#34;: &#34;---\nname: local-doc-edit\ndescription: Load this Skill after off</div>    </div>
+<span class="mono">doc_create</span><span class="mono" style="color:var(--tx3)">步骤 #8</span>      </div>
+      <div class="f-detail"><b>具体表现：</b>doc_create 调用失败（命中特征：error field, success=false）</div>
+<div class="f-impact"><b>影响：</b>该步骤未获得有效数据，agent 可能基于缺失信息继续作答或转向低质量替代路径</div><div class="evi">{&#34;success&#34;: false, &#34;code&#34;: &#34;file_exists&#34;, &#34;error&#34;: &#34;output file already exists; choose a new output_path or explicitly set overwrite=true&#34;, &#34;action&#34;: &#34;doc_create&#34;}</div>    </div>
 </div>
 
 <div class="note" style="margin-top:26px">

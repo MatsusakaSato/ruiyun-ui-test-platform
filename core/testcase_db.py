@@ -303,8 +303,13 @@ def add_preset_case(payload: dict, db_path: Path | str | None = None) -> tuple[b
     return True, f"已新增 {cid}（预设共 {total} 条）", new_case
 
 
-def add_preset_cases(items: list, db_path: Path | str | None = None) -> tuple[bool, str, int]:
-    """批量新增预设用例（Excel / CSV 导入），在单一事务内完成。"""
+def add_preset_cases(items: list, db_path: Path | str | None = None,
+                     replace: bool = False) -> tuple[bool, str, int]:
+    """批量新增或覆盖预设用例（Excel / CSV 导入），在单一事务内完成。
+
+    replace=True: 清空已有预设用例，以传入列表重新建库；
+    replace=False: 追加到现有预设用例库末尾，序号顺延。
+    """
     rows = []
     for it in (items or []):
         if not isinstance(it, dict):
@@ -325,6 +330,7 @@ def add_preset_cases(items: list, db_path: Path | str | None = None) -> tuple[bo
             labels["attachment"] = True
 
         rows.append({
+            "id": it.get("id"),
             "prompt": prompt,
             "name": str(it.get("name") or "").strip(),
             "labels": labels,
@@ -338,13 +344,17 @@ def add_preset_cases(items: list, db_path: Path | str | None = None) -> tuple[bo
     init_db(db_path)
     with _get_connection(db_path) as conn:
         cur = conn.cursor()
-        cur.execute("SELECT COALESCE(MAX(seq), 0) FROM testcases")
-        seq = int(cur.fetchone()[0])
+        if replace:
+            cur.execute("DELETE FROM testcases")
+            seq = 0
+        else:
+            cur.execute("SELECT COALESCE(MAX(seq), 0) FROM testcases")
+            seq = int(cur.fetchone()[0])
 
         insert_data = []
         for it in rows:
             seq += 1
-            cid = f"CASE-{seq:03d}"
+            cid = it.get("id") if (replace and it.get("id")) else f"CASE-{seq:03d}"
             name = it["name"] or f"导入-{seq:03d}"
             scene = it["labels"].get("scene", "")
             targets = json.dumps(it["labels"].get("targets", []), ensure_ascii=False)
@@ -358,7 +368,7 @@ def add_preset_cases(items: list, db_path: Path | str | None = None) -> tuple[bo
             ))
 
         cur.executemany("""
-            INSERT INTO testcases
+            INSERT OR REPLACE INTO testcases
             (id, name, prompt, scene, targets, attachment, expect_tools, attachments, seq)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, insert_data)
@@ -367,7 +377,8 @@ def add_preset_cases(items: list, db_path: Path | str | None = None) -> tuple[bo
         cur.execute("SELECT COUNT(*) FROM testcases")
         total = int(cur.fetchone()[0])
 
-    return True, f"已导入 {len(rows)} 条（预设共 {total} 条）", len(rows)
+    mode_text = "覆盖" if replace else "新增"
+    return True, f"已{mode_text}导入 {len(rows)} 条（预设共 {total} 条）", len(rows)
 
 
 def delete_preset_cases(ids: list | set, db_path: Path | str | None = None) -> tuple[bool, str, int]:
