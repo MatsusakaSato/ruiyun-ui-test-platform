@@ -143,31 +143,56 @@ export async function delRound(ev, rid) {
   }
 }
 
+export function syncRoundActive(rid) {
+  document.querySelectorAll('.round-item').forEach(el => {
+    const idEl = el.querySelector('.rid');
+    const isAct = !!idEl && (idEl.textContent.trim() === rid || idEl.getAttribute('data-rid') === rid);
+    el.classList.toggle('active', isAct);
+  });
+}
+
 export async function openRound(rid) {
   state.currentRound = rid;
   state.currentCase = 0;
-  document.querySelectorAll('.round-item').forEach(el => el.classList.remove('active'));
-  if (window.event && window.event.target && window.event.target.closest) {
-    window.event.target.closest('.round-item')?.classList.add('active');
-  }
+  syncRoundActive(rid);
   const j = await (await fetch('/api/rounds/' + rid)).json();
   if (j.error) { alert('读不到该轮次的数据：' + rid); return; }
   state.lastRoundData = j;
   renderRound(j);
+  syncRoundActive(rid);
 }
 
 export async function openRoundById(rid) {
   state.currentRound = rid;
   state.currentCase = 0;
+  syncRoundActive(rid);
   const j = await (await fetch('/api/rounds/' + rid)).json();
   if (!j.error) {
     state.lastRoundData = j;
     renderRound(j);
   }
-  document.querySelectorAll('.round-item').forEach(el => {
-    const idEl = el.querySelector('.rid');
-    el.classList.toggle('active', !!idEl && idEl.textContent.trim() === rid);
-  });
+  syncRoundActive(rid);
+}
+
+export function copyRoundId(rid, btn) {
+  const onDone = () => {
+    if (btn) {
+      const orig = btn.textContent;
+      btn.textContent = '已复制!';
+      setTimeout(() => { btn.textContent = orig; }, 1500);
+    }
+  };
+  if (!navigator.clipboard) {
+    const ta = document.createElement('textarea');
+    ta.value = rid;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    document.body.removeChild(ta);
+    onDone();
+    return;
+  }
+  navigator.clipboard.writeText(rid).then(onDone).catch(() => onDone());
 }
 
 /* ---------- 详情面板渲染 ---------- */
@@ -181,6 +206,26 @@ export function renderRound(data) {
   const s = data.summary || {}, d = data.detail || {}, m = d.metrics || {}, sm = m.summary || s;
   const rp = m.repro_summary || {};
   let html = '';
+
+  const runId = data.run_id || s.run_id || '';
+  const finishedAt = s.finished_at || '';
+  const runMode = s.run_mode || 'UI 自动化';
+  const elapsed = s.elapsed_s != null ? `${s.elapsed_s}s` : '';
+  const artCount = Array.isArray(data.artifacts) ? data.artifacts.length : (s.round_artifacts ? s.round_artifacts.length : 0);
+
+  html += `<div class="round-detail-hd">
+    <div class="rd-title">
+      <span>轮次</span>
+      <span class="mono" style="font-size:13.5px;color:var(--accent);user-select:all">${esc(runId)}</span>
+      <button class="rd-copy" onclick="copyRoundId('${esc(runId)}', this)" title="复制轮次号">复制</button>
+    </div>
+    <span class="rd-badge">${esc(runMode)}</span>
+    <div class="rd-meta">
+      ${finishedAt ? `<span>🕒 ${esc(finishedAt)}</span>` : ''}
+      ${elapsed ? `<span>⏱ 耗时 <b>${elapsed}</b></span>` : ''}
+      ${artCount > 0 ? `<span class="pill ok" style="font-weight:600">📦 交付产物 ${artCount} 个</span>` : ''}
+    </div>
+  </div>`;
 
   const cases = d.cases || [];
   html += '<div class="kpis">'

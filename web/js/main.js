@@ -7,7 +7,7 @@ import { initNav, switchPage, renderHistoryPane, loadEnv, refreshAppStatus, load
 import { initHome, renderRunCases, doRun, setRunning, renderStatus, goToLatestHistory } from './page-home.js';
 import { initCases, loadUploads, pickAttach, uploadFiles, openLib, closeLib, rmAttach, savePreset, renderCases, delCase, setCaseTab, loadPresetLib } from './page-cases.js';
 import { initExcelImport } from './excel-import.js';
-import { initHistory, loadRounds, openRound, delRound, setTab, pickCase, startEval, stopEval, refreshEvalStatus, pollEval, openRoundById } from './page-history.js';
+import { initHistory, loadRounds, openRound, delRound, setTab, pickCase, startEval, stopEval, refreshEvalStatus, pollEval, openRoundById, copyRoundId } from './page-history.js';
 import { initModals, loadLLM, openLlm, revealCfgPath } from './modals.js';
 
 // 将 HTML 模板内联交互所依赖的函数挂载到 window，确保 100% 兼容
@@ -32,7 +32,8 @@ Object.assign(window, {
   startEval,
   stopEval,
   openLlm,
-  openRoundById
+  openRoundById,
+  copyRoundId
 });
 
 // 全局快捷键
